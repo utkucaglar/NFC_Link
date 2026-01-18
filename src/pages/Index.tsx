@@ -1,13 +1,27 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { ArrowRight, Wifi, CreditCard, PawPrint, Link2, Zap, Shield, Smartphone, ChevronRight } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
-import heroImage from "@/assets/hero-nfc.png";
+import ProductSwiper from "@/components/ProductSwiper";
+import { supabase } from "@/lib/supabase";
 import productCard from "@/assets/product-nfc-card.png";
 import productBand from "@/assets/product-nfc-band.png";
 import productPetTag from "@/assets/product-pet-tag.png";
+
+// Helper function to get product image with fallback
+const getProductImage = (imageUrl: string | null, category: string) => {
+  if (imageUrl && imageUrl.startsWith('http')) {
+    return imageUrl;
+  }
+  // Fallback to local images based on category
+  if (category === "Profesyonel" || category === "Premium") return productCard;
+  if (category === "Spor & Etkinlik") return productBand;
+  if (category === "Evcil Hayvan") return productPetTag;
+  return productCard;
+};
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -69,32 +83,42 @@ const howItWorks = [
   }
 ];
 
-const products = [
-  {
-    id: 1,
-    name: "NFC Kartvizit",
-    price: 149,
-    image: productCard,
-    category: "Profesyonel"
-  },
-  {
-    id: 3,
-    name: "NFC Bileklik",
-    price: 199,
-    image: productBand,
-    category: "Spor & Etkinlik"
-  },
-  {
-    id: 5,
-    name: "Pet Tag",
-    price: 129,
-    image: productPetTag,
-    category: "Evcil Hayvan"
-  }
-];
+interface Product {
+  id: number;
+  name: string;
+  price: number;
+  category: string;
+  image_url: string | null;
+}
 
 export default function Index() {
   const { addToCart } = useCart();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+
+  // Fetch featured products from database
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .select('id, name, price, category, image_url')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true })
+          .limit(3);
+
+        if (error) throw error;
+        setProducts(data || []);
+      } catch (error) {
+        console.error('Ürünler yüklenemedi:', error);
+        // Fallback to empty array - will show "no products" or use defaults
+      } finally {
+        setLoadingProducts(false);
+      }
+    };
+
+    fetchProducts();
+  }, []);
 
   return (
     <Layout>
@@ -177,15 +201,7 @@ export default function Index() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="relative"
             >
-              <div className="relative">
-                <img 
-                  src={heroImage} 
-                  alt="NFC Card" 
-                  className="w-full max-w-lg mx-auto animate-float rounded-3xl shadow-2xl"
-                />
-                <div className="absolute -bottom-4 -right-4 w-32 h-32 gradient-primary rounded-3xl blur-2xl opacity-50" />
-                <div className="absolute -top-4 -left-4 w-24 h-24 bg-accent/30 rounded-3xl blur-2xl" />
-              </div>
+              <ProductSwiper autoPlayInterval={4000} />
             </motion.div>
           </div>
         </div>
@@ -293,50 +309,61 @@ export default function Index() {
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-3 gap-8">
-            {products.map((product, index) => (
-              <motion.div
-                key={product.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.1 }}
-                className="group bg-background rounded-2xl overflow-hidden shadow-card hover:shadow-xl transition-all duration-300"
-              >
-                <Link to={`/product/${product.id}`} className="block">
-                  <div className="aspect-square p-8 bg-muted/30 flex items-center justify-center overflow-hidden">
-                    <img 
-                      src={product.image} 
-                      alt={product.name}
-                      className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
-                    />
-                  </div>
-                </Link>
-                <div className="p-6">
-                  <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
-                    {product.category}
-                  </span>
-                  <Link to={`/product/${product.id}`}>
-                    <h3 className="text-lg font-semibold mt-3 mb-2 hover:text-primary transition-colors">{product.name}</h3>
+          {loadingProducts ? (
+            <div className="flex justify-center py-12">
+              <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : products.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">Henüz ürün eklenmemiş.</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-3 gap-8">
+              {products.map((product, index) => (
+                <motion.div
+                  key={product.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: index * 0.1 }}
+                  className="group bg-background rounded-2xl overflow-hidden shadow-card hover:shadow-xl transition-all duration-300"
+                >
+                  <Link to={`/product/${product.id}`} className="block">
+                    <div className="aspect-square p-8 bg-muted/30 flex items-center justify-center overflow-hidden">
+                      <img 
+                        src={getProductImage(product.image_url, product.category)} 
+                        alt={product.name}
+                        className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
+                      />
+                    </div>
                   </Link>
-                  <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold text-gradient">₺{product.price}</span>
-                    <Button 
-                      size="sm"
-                      onClick={() => addToCart({
-                        id: product.id,
-                        name: product.name,
-                        price: product.price,
-                        image: product.image
-                      })}
-                    >
-                      Sepete Ekle
-                    </Button>
+                  <div className="p-6">
+                    <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
+                      {product.category}
+                    </span>
+                    <Link to={`/product/${product.id}`}>
+                      <h3 className="text-lg font-semibold mt-3 mb-2 hover:text-primary transition-colors">{product.name}</h3>
+                    </Link>
+                    <div className="flex items-center justify-between">
+                      <span className="text-2xl font-bold text-gradient">₺{product.price}</span>
+                      <Button 
+                        size="sm"
+                        onClick={() => addToCart({
+                          id: product.id,
+                          productId: product.id,
+                          name: product.name,
+                          price: product.price,
+                          image: getProductImage(product.image_url, product.category)
+                        })}
+                      >
+                        Sepete Ekle
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
 
           <div className="text-center mt-12">
             <Link to="/products">

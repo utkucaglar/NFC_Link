@@ -3,14 +3,12 @@ import { toast } from "sonner";
 
 export interface CartItem {
   id: number;
+  productId?: number; // Database product ID
   name: string;
   price: number;
   image: string;
   quantity: number;
-  customization?: {
-    text?: string;
-    color?: string;
-  };
+  customization?: Record<string, any>;
 }
 
 interface CartContextType {

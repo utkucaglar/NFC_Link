@@ -2,12 +2,9 @@
 -- NFCLink Functions & Triggers
 -- File: 03_functions.sql
 -- ============================================
--- Bu dosya otomatik işlemler için fonksiyonlar oluşturur
--- ÖNEMLİ: 02_policies.sql'i çalıştırdıktan SONRA çalıştırın
--- ============================================
 
 -- ============================================
--- 1. AUTO UPDATE TIMESTAMP FUNCTION
+-- 1. UPDATED_AT FONKSİYONU
 -- ============================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -17,29 +14,33 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Apply to tables
+-- Updated_at trigger'ları
+DROP TRIGGER IF EXISTS update_user_profiles_updated_at ON user_profiles;
 CREATE TRIGGER update_user_profiles_updated_at
   BEFORE UPDATE ON user_profiles
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_products_updated_at ON products;
 CREATE TRIGGER update_products_updated_at
   BEFORE UPDATE ON products
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_orders_updated_at ON orders;
 CREATE TRIGGER update_orders_updated_at
   BEFORE UPDATE ON orders
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_nfcs_updated_at ON nfcs;
 CREATE TRIGGER update_nfcs_updated_at
   BEFORE UPDATE ON nfcs
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================
--- 2. AUTO GENERATE ORDER NUMBER
+-- 2. SİPARİŞ NUMARASI OLUŞTURMA
 -- ============================================
 CREATE OR REPLACE FUNCTION generate_order_number()
 RETURNS TRIGGER AS $$
@@ -49,37 +50,75 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS set_order_number ON orders;
 CREATE TRIGGER set_order_number
   BEFORE INSERT ON orders
   FOR EACH ROW
   EXECUTE FUNCTION generate_order_number();
 
 -- ============================================
--- 3. AUTO CREATE USER PROFILE ON SIGNUP
+-- 3. KULLANICI PROFİLİ OLUŞTURMA (SIGNUP)
 -- ============================================
 CREATE OR REPLACE FUNCTION create_user_profile()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_first_name TEXT;
+  v_last_name TEXT;
+  v_full_name TEXT;
 BEGIN
-  INSERT INTO public.user_profiles (id, email, full_name, role)
+  -- first_name: metadata'dan al
+  v_first_name := COALESCE(
+    NULLIF(TRIM(NEW.raw_user_meta_data->>'first_name'), ''),
+    ''
+  );
+  
+  -- last_name: metadata'dan al
+  v_last_name := COALESCE(
+    NULLIF(TRIM(NEW.raw_user_meta_data->>'last_name'), ''),
+    ''
+  );
+  
+  -- full_name: first + last veya metadata'dan
+  v_full_name := COALESCE(
+    NULLIF(TRIM(CONCAT(v_first_name, ' ', v_last_name)), ''),
+    NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), ''),
+    ''
+  );
+  
+  INSERT INTO public.user_profiles (id, email, first_name, last_name, full_name, role)
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
+    v_first_name,
+    v_last_name,
+    v_full_name,
     'customer'
-  );
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), user_profiles.first_name),
+    last_name = COALESCE(NULLIF(EXCLUDED.last_name, ''), user_profiles.last_name),
+    full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), user_profiles.full_name),
+    updated_at = NOW();
+  
   RETURN NEW;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE LOG 'Error in create_user_profile: %', SQLERRM;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Drop trigger if exists and recreate
+-- Trigger'ı oluştur
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP TRIGGER IF EXISTS on_auth_user_created_handle_new_user ON auth.users;
+
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW
   EXECUTE FUNCTION create_user_profile();
 
 -- ============================================
--- 4. UPDATE NFC SCAN COUNT
+-- 4. NFC TARAMA SAYACI
 -- ============================================
 CREATE OR REPLACE FUNCTION update_nfc_scan_count()
 RETURNS TRIGGER AS $$
@@ -94,52 +133,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS increment_scan_count ON nfc_scans;
 CREATE TRIGGER increment_scan_count
   AFTER INSERT ON nfc_scans
   FOR EACH ROW
   EXECUTE FUNCTION update_nfc_scan_count();
 
 -- ============================================
--- 5. VALIDATE ORDER TOTAL (Optional)
+-- 5. NFC KEY OLUŞTURMA
 -- ============================================
-CREATE OR REPLACE FUNCTION validate_order_total()
-RETURNS TRIGGER AS $$
-DECLARE
-  calculated_total DECIMAL(10, 2);
-BEGIN
-  -- Calculate total from order items
-  SELECT COALESCE(SUM(price * quantity), 0)
-  INTO calculated_total
-  FROM order_items
-  WHERE order_id = NEW.id;
-  
-  -- If totals don't match, log a warning (but don't block)
-  IF calculated_total != NEW.total THEN
-    RAISE WARNING 'Order % total mismatch: expected %, got %', 
-      NEW.order_number, calculated_total, NEW.total;
-  END IF;
-  
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER check_order_total
-  BEFORE UPDATE ON orders
-  FOR EACH ROW
-  EXECUTE FUNCTION validate_order_total();
-
--- ============================================
--- UTILITY FUNCTIONS
--- ============================================
-
--- Function to generate unique NFC key
 CREATE OR REPLACE FUNCTION generate_nfc_key(nfc_type TEXT)
 RETURNS TEXT AS $$
 DECLARE
   prefix TEXT;
   random_part TEXT;
 BEGIN
-  -- Set prefix based on type
   prefix := CASE nfc_type
     WHEN 'business-card' THEN 'biz'
     WHEN 'pet-id' THEN 'pet'
@@ -147,7 +155,6 @@ BEGIN
     ELSE 'nfc'
   END;
   
-  -- Generate random part (8 characters)
   random_part := LOWER(SUBSTRING(MD5(RANDOM()::TEXT || CLOCK_TIMESTAMP()::TEXT) FROM 1 FOR 8));
   
   RETURN prefix || '-' || random_part;
@@ -155,15 +162,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ============================================
--- SUCCESS MESSAGE
+-- SONUÇ
 -- ============================================
 DO $$ 
 BEGIN 
-  RAISE NOTICE '✅ Functions & Triggers created successfully!';
-  RAISE NOTICE '⚡ Automatic operations are now enabled:';
-  RAISE NOTICE '  - Auto order numbers';
-  RAISE NOTICE '  - Auto user profile creation';
-  RAISE NOTICE '  - Auto updated_at timestamps';
-  RAISE NOTICE '  - Auto NFC scan counting';
+  RAISE NOTICE '✅ Functions & Triggers created!';
   RAISE NOTICE '📝 Next: Run 04_seed_data.sql';
 END $$;

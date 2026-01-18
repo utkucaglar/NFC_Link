@@ -1,75 +1,60 @@
-import { useEffect } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Package, Truck, CheckCircle2, Clock, CircleDot } from "lucide-react";
+import { Package, Truck, CheckCircle2, Clock, CircleDot, X, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import productCard from "@/assets/product-nfc-card.png";
+import productBand from "@/assets/product-nfc-band.png";
+import productPetTag from "@/assets/product-pet-tag.png";
 
-type OrderStatus = "pending" | "confirmed" | "production" | "shipped" | "delivered";
+// Helper function to get product image with fallback
+const getProductImage = (imageUrl: string | null | undefined, productName: string) => {
+  if (imageUrl && imageUrl.startsWith('http')) {
+    return imageUrl;
+  }
+  const name = productName?.toLowerCase() || '';
+  if (name.includes('kartvizit') || name.includes('card')) return productCard;
+  if (name.includes('bileklik') || name.includes('band')) return productBand;
+  if (name.includes('pet') || name.includes('tag')) return productPetTag;
+  return productCard;
+};
+
+type OrderStatus = "pending" | "confirmed" | "production" | "shipped" | "delivered" | "cancelled";
+
+interface OrderItem {
+  id: string;
+  product_id: number;
+  quantity: number;
+  price: number;
+  customization: Record<string, any> | null;
+  admin_notes: string | null;
+  customization_confirmed: boolean;
+  products?: {
+    name: string;
+    image_url: string;
+  };
+}
 
 interface Order {
   id: string;
-  orderNumber: string;
-  date: string;
+  order_number: string;
   status: OrderStatus;
-  items: {
-    name: string;
-    quantity: number;
-    price: number;
-  }[];
   total: number;
-  trackingNumber?: string;
+  subtotal: number | null;
+  discount_amount: number | null;
+  tracking_number: string | null;
+  shipping_address: string | null;
+  created_at: string;
+  updated_at: string;
+  order_items?: OrderItem[];
 }
 
-const orders: Order[] = [
-  {
-    id: "1",
-    orderNumber: "NFC-2024-0001",
-    date: "2024-01-10",
-    status: "delivered",
-    items: [
-      { name: "NFC Kartvizit - Klasik Beyaz", quantity: 1, price: 149 }
-    ],
-    total: 149,
-    trackingNumber: "1234567890"
-  },
-  {
-    id: "2",
-    orderNumber: "NFC-2024-0015",
-    date: "2024-02-01",
-    status: "shipped",
-    items: [
-      { name: "NFC Bileklik - Spor", quantity: 2, price: 199 }
-    ],
-    total: 398,
-    trackingNumber: "0987654321"
-  },
-  {
-    id: "3",
-    orderNumber: "NFC-2024-0023",
-    date: "2024-02-10",
-    status: "production",
-    items: [
-      { name: "Pet Tag - Altın", quantity: 1, price: 129 },
-      { name: "NFC Kartvizit - Premium Siyah", quantity: 1, price: 179 }
-    ],
-    total: 308
-  },
-  {
-    id: "4",
-    orderNumber: "NFC-2024-0030",
-    date: "2024-02-15",
-    status: "pending",
-    items: [
-      { name: "NFC Kartvizit - Klasik Beyaz", quantity: 3, price: 149 }
-    ],
-    total: 447
-  }
-];
-
-const statusConfig = {
+const statusConfig: Record<OrderStatus, { label: string; color: string; icon: React.ElementType }> = {
   pending: {
     label: "Beklemede",
     color: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20",
@@ -94,18 +79,69 @@ const statusConfig = {
     label: "Teslim Edildi",
     color: "bg-accent/10 text-accent border-accent/20",
     icon: CheckCircle2
+  },
+  cancelled: {
+    label: "İptal Edildi",
+    color: "bg-destructive/10 text-destructive border-destructive/20",
+    icon: X
   }
 };
 
 export default function Orders() {
-  const { user, loading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!loading && !user) {
+    if (!authLoading && !user) {
       navigate("/login");
     }
-  }, [user, loading, navigate]);
+  }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    if (user) {
+      fetchOrders();
+    }
+  }, [user]);
+
+  const fetchOrders = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("orders")
+        .select(`
+          *,
+          order_items(
+            *,
+            products(name, image_url)
+          )
+        `)
+        .eq("user_id", user?.id)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setOrders(data || []);
+    } catch (error) {
+      console.error("Siparişler yüklenirken hata:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading || authLoading) {
+    return (
+      <Layout>
+        <section className="py-12">
+          <div className="container mx-auto px-4">
+            <div className="flex items-center justify-center min-h-[40vh]">
+              <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          </div>
+        </section>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -126,7 +162,8 @@ export default function Orders() {
 
           <div className="space-y-4">
             {orders.map((order, index) => {
-              const StatusIcon = statusConfig[order.status].icon;
+              const StatusIcon = statusConfig[order.status]?.icon || Clock;
+              const isExpanded = expandedOrder === order.id;
               
               return (
                 <motion.div
@@ -134,91 +171,245 @@ export default function Orders() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.1 }}
-                  className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+                  className="bg-card rounded-2xl shadow-card border border-border/50 overflow-hidden"
                 >
-                  {/* Header */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                    <div>
-                      <div className="flex items-center gap-3 mb-1">
-                        <h3 className="font-semibold">{order.orderNumber}</h3>
-                        <Badge className={cn("border", statusConfig[order.status].color)}>
-                          <StatusIcon className="w-3 h-3 mr-1" />
-                          {statusConfig[order.status].label}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(order.date).toLocaleDateString('tr-TR', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric'
-                        })}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-gradient">₺{order.total}</p>
-                      {order.trackingNumber && (
-                        <p className="text-xs text-muted-foreground">
-                          Takip: {order.trackingNumber}
+                  {/* Header - Clickable */}
+                  <div 
+                    className="p-6 cursor-pointer hover:bg-muted/30 transition-colors"
+                    onClick={() => setExpandedOrder(isExpanded ? null : order.id)}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <div className="flex items-center gap-3 mb-1">
+                          <h3 className="font-semibold">{order.order_number}</h3>
+                          <Badge className={cn("border", statusConfig[order.status]?.color)}>
+                            <StatusIcon className="w-3 h-3 mr-1" />
+                            {statusConfig[order.status]?.label}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {new Date(order.created_at).toLocaleDateString('tr-TR', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
                         </p>
-                      )}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="text-2xl font-bold text-gradient">₺{order.total?.toLocaleString('tr-TR')}</p>
+                          {order.tracking_number && (
+                            <p className="text-xs text-muted-foreground">
+                              Takip: {order.tracking_number}
+                            </p>
+                          )}
+                        </div>
+                        {isExpanded ? (
+                          <ChevronUp className="w-5 h-5 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Items */}
-                  <div className="border-t border-border pt-4">
-                    <div className="space-y-2">
-                      {order.items.map((item, i) => (
-                        <div key={i} className="flex justify-between text-sm">
-                          <span>
-                            {item.name} <span className="text-muted-foreground">x{item.quantity}</span>
-                          </span>
-                          <span className="font-medium">₺{item.price * item.quantity}</span>
+                    {/* Items Summary */}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {order.order_items?.map((item) => (
+                        <div key={item.id} className="flex items-center gap-2 bg-muted/30 rounded-lg px-3 py-1.5">
+                          <img
+                            src={getProductImage(item.products?.image_url, item.products?.name || '')}
+                            alt={item.products?.name}
+                            className="w-6 h-6 object-contain"
+                          />
+                          <span className="text-sm">{item.products?.name}</span>
+                          <span className="text-xs text-muted-foreground">x{item.quantity}</span>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Progress Bar for Active Orders */}
-                  {order.status !== "delivered" && (
-                    <div className="mt-6">
-                      <div className="flex justify-between mb-2">
-                        {["pending", "confirmed", "production", "shipped", "delivered"].map((step, i) => {
-                          const stepIndex = ["pending", "confirmed", "production", "shipped", "delivered"].indexOf(order.status);
-                          const currentIndex = i;
-                          const isCompleted = currentIndex <= stepIndex;
-                          
-                          return (
-                            <div key={step} className="flex flex-col items-center">
-                              <div className={cn(
-                                "w-3 h-3 rounded-full",
-                                isCompleted ? "gradient-primary" : "bg-muted"
-                              )} />
-                              <span className={cn(
-                                "text-xs mt-1 hidden sm:block",
-                                isCompleted ? "text-primary" : "text-muted-foreground"
-                              )}>
-                                {statusConfig[step as OrderStatus].label}
-                              </span>
+                  {/* Expanded Content */}
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="border-t border-border"
+                      >
+                        <div className="p-6 space-y-6">
+                          {/* Order Items Detail */}
+                          <div>
+                            <h4 className="font-medium mb-3">Sipariş Detayları</h4>
+                            <div className="space-y-4">
+                              {order.order_items?.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className="bg-muted/30 rounded-xl p-4"
+                                >
+                                  <div className="flex items-start gap-4">
+                                    <img
+                                      src={getProductImage(item.products?.image_url, item.products?.name || '')}
+                                      alt={item.products?.name}
+                                      className="w-16 h-16 object-contain rounded-lg bg-muted/50 p-1"
+                                    />
+                                    <div className="flex-1">
+                                      <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                          <p className="font-medium">{item.products?.name}</p>
+                                          <p className="text-sm text-muted-foreground">
+                                            {item.quantity} adet × ₺{item.price?.toLocaleString('tr-TR')}
+                                          </p>
+                                        </div>
+                                        <span className="font-semibold">
+                                          ₺{(item.quantity * item.price)?.toLocaleString('tr-TR')}
+                                        </span>
+                                      </div>
+
+                                      {/* Customization Details - Customer's Submission */}
+                                      {item.customization && Object.keys(item.customization).length > 0 && (
+                                        <div className="mt-3 p-3 bg-background rounded-lg border border-border">
+                                          <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                                            Kişiselleştirme Bilgileriniz
+                                            {item.customization_confirmed && (
+                                              <Badge className="bg-accent/10 text-accent border-accent/20 text-xs">
+                                                <CheckCircle2 className="w-3 h-3 mr-1" />
+                                                Onaylandı
+                                              </Badge>
+                                            )}
+                                          </p>
+                                          <div className="space-y-1 text-sm">
+                                            {Object.entries(item.customization).map(([key, value]) => (
+                                              <p key={key}>
+                                                <span className="text-muted-foreground capitalize">{key}:</span>{" "}
+                                                {typeof value === 'string' ? value : JSON.stringify(value)}
+                                              </p>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Admin Notes - Production Notes */}
+                                      {item.admin_notes && (
+                                        <div className="mt-3 p-3 bg-primary/5 rounded-lg border border-primary/20">
+                                          <p className="text-sm font-medium text-primary mb-1">Üretim Notu</p>
+                                          <p className="text-sm">{item.admin_notes}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          );
-                        })}
-                      </div>
-                      <div className="h-1 bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className="h-full gradient-primary transition-all duration-500"
-                          style={{
-                            width: `${(["pending", "confirmed", "production", "shipped", "delivered"].indexOf(order.status) + 1) * 20}%`
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
+                          </div>
+
+                          {/* Tracking Info */}
+                          {order.tracking_number && (order.status === 'shipped' || order.status === 'delivered') && (
+                            <div className="p-4 bg-primary/5 rounded-xl border border-primary/20">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="font-medium text-primary mb-1">Kargo Takip</p>
+                                  <p className="text-sm">Takip No: <span className="font-mono">{order.tracking_number}</span></p>
+                                </div>
+                                <Button 
+                                  size="sm" 
+                                  variant="outline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.open(`https://gonderitakip.ptt.gov.tr/Track/Verify?q=${order.tracking_number}`, '_blank');
+                                  }}
+                                >
+                                  <ExternalLink className="w-4 h-4 mr-1" />
+                                  Takip Et
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Order Summary */}
+                          <div className="border-t border-border pt-4">
+                            <div className="flex justify-end">
+                              <div className="w-64 space-y-2 text-sm">
+                                {order.subtotal && (
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Ara Toplam:</span>
+                                    <span>₺{order.subtotal.toLocaleString('tr-TR')}</span>
+                                  </div>
+                                )}
+                                {order.discount_amount && order.discount_amount > 0 && (
+                                  <div className="flex justify-between text-accent">
+                                    <span>İndirim:</span>
+                                    <span>-₺{order.discount_amount.toLocaleString('tr-TR')}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between font-semibold text-lg pt-2 border-t border-border">
+                                  <span>Toplam:</span>
+                                  <span className="text-gradient">₺{order.total?.toLocaleString('tr-TR')}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Progress Bar for Active Orders */}
+                          {order.status !== "delivered" && order.status !== "cancelled" && (
+                            <div className="pt-4 border-t border-border">
+                              <h4 className="font-medium mb-4">Sipariş Durumu</h4>
+                              <div className="flex justify-between mb-2">
+                                {(["pending", "confirmed", "production", "shipped", "delivered"] as OrderStatus[]).map((step, i) => {
+                                  const stepIndex = ["pending", "confirmed", "production", "shipped", "delivered"].indexOf(order.status);
+                                  const currentIndex = i;
+                                  const isCompleted = currentIndex <= stepIndex;
+                                  
+                                  return (
+                                    <div key={step} className="flex flex-col items-center">
+                                      <div className={cn(
+                                        "w-4 h-4 rounded-full flex items-center justify-center",
+                                        isCompleted ? "gradient-primary" : "bg-muted"
+                                      )}>
+                                        {isCompleted && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                      </div>
+                                      <span className={cn(
+                                        "text-xs mt-2 text-center max-w-[60px]",
+                                        isCompleted ? "text-primary font-medium" : "text-muted-foreground"
+                                      )}>
+                                        {statusConfig[step].label}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full gradient-primary transition-all duration-500"
+                                  style={{
+                                    width: `${(["pending", "confirmed", "production", "shipped", "delivered"].indexOf(order.status) + 1) * 20}%`
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Cancelled Order Info */}
+                          {order.status === "cancelled" && (
+                            <div className="p-4 bg-destructive/5 rounded-xl border border-destructive/20">
+                              <p className="font-medium text-destructive mb-1">Sipariş İptal Edildi</p>
+                              <p className="text-sm text-muted-foreground">
+                                Bu sipariş iptal edilmiştir. Sorularınız için bizimle iletişime geçebilirsiniz.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </motion.div>
               );
             })}
           </div>
 
-          {orders.length === 0 && (
+          {orders.length === 0 && !loading && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -231,6 +422,9 @@ export default function Orders() {
               <p className="text-muted-foreground mb-6">
                 İlk siparişinizi verin ve NFC deneyimine başlayın.
               </p>
+              <Button onClick={() => navigate('/products')}>
+                Ürünlere Göz At
+              </Button>
             </motion.div>
           )}
         </div>

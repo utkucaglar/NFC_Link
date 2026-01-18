@@ -39,9 +39,7 @@ export default function Cart() {
       toast.error("Sepetiniz boş");
       return;
     }
-    toast.info("Ödeme sayfasına yönlendiriliyorsunuz...");
-    // TODO: Navigate to checkout page or integrate payment
-    // navigate("/checkout");
+    navigate("/checkout");
   };
 
   const monthlyFee = cartItems.reduce((sum, item) => sum + 29 * item.quantity, 0);

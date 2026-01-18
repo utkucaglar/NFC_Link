@@ -19,7 +19,7 @@ INSERT INTO products (id, name, description, price, category, image_url, is_acti
  'Şık ve minimal tasarım ile profesyonel görünüm. Yüksek kaliteli PVC malzeme, su ve çizilmeye dayanıklı.',
  149.00,
  'Profesyonel',
- '/product-nfc-card.png',
+ 'https://images.unsplash.com/photo-1611532736597-de2d4265fba3?w=400&h=400&fit=crop',
  true
 ),
 
@@ -28,7 +28,7 @@ INSERT INTO products (id, name, description, price, category, image_url, is_acti
  'Metal kaplama, lüks hissiyat. Lazer gravür seçeneği ile kişiselleştirilebilir premium kartvizit.',
  179.00,
  'Profesyonel',
- '/product-nfc-card.png',
+ 'https://images.unsplash.com/photo-1616628188859-7a11abb6fcc9?w=400&h=400&fit=crop',
  true
 ),
 
@@ -37,7 +37,7 @@ INSERT INTO products (id, name, description, price, category, image_url, is_acti
  'Su geçirmez, dayanıklı silikon. IP68 su geçirmezlik ile spor ve günlük kullanım için ideal.',
  199.00,
  'Spor & Etkinlik',
- '/product-nfc-band.png',
+ 'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400&h=400&fit=crop',
  true
 ),
 
@@ -46,7 +46,7 @@ INSERT INTO products (id, name, description, price, category, image_url, is_acti
  'Tek kullanımlık, etkinlikler için ideal. Özelleştirilebilir baskı ile toplu siparişler için uygun.',
  99.00,
  'Spor & Etkinlik',
- '/product-nfc-band.png',
+ 'https://images.unsplash.com/photo-1551816230-ef5deaed4a26?w=400&h=400&fit=crop',
  true
 ),
 
@@ -55,7 +55,7 @@ INSERT INTO products (id, name, description, price, category, image_url, is_acti
  'Paslanmaz çelik, altın kaplama. Evcil hayvanınız için şık ve güvenli kimlik etiketi.',
  129.00,
  'Evcil Hayvan',
- '/product-pet-tag.png',
+ 'https://images.unsplash.com/photo-1587300003388-59208cc962cb?w=400&h=400&fit=crop',
  true
 ),
 
@@ -64,7 +64,7 @@ INSERT INTO products (id, name, description, price, category, image_url, is_acti
  'Paslanmaz çelik, gümüş kaplama. Ücretsiz gravür ile kişiselleştirilebilir pet tag.',
  119.00,
  'Evcil Hayvan',
- '/product-pet-tag.png',
+ 'https://images.unsplash.com/photo-1587300003388-59208cc962cb?w=400&h=400&fit=crop',
  true
 )
 

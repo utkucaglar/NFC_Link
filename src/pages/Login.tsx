@@ -1,24 +1,148 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate, Link } from "react-router-dom";
-import { Mail, Lock, User, Eye, EyeOff, CheckCircle2 } from "lucide-react";
+import { Mail, Lock, User, Eye, EyeOff, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
 
 export default function Login() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showVerification, setShowVerification] = useState(false);
+  const [errors, setErrors] = useState<{[key: string]: string}>({});
+  const [resendCountdown, setResendCountdown] = useState(0);
+  const [resendLoading, setResendLoading] = useState(false);
   const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
 
+  // Countdown timer for resend button
+  useEffect(() => {
+    if (resendCountdown > 0) {
+      const timer = setTimeout(() => {
+        setResendCountdown(resendCountdown - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCountdown]);
+
+  // Start countdown when verification screen is shown
+  useEffect(() => {
+    if (showVerification) {
+      setResendCountdown(60); // 60 saniye (Supabase güvenlik sınırı)
+    }
+  }, [showVerification]);
+
+  // Supabase hata mesajlarını Türkçeye çevir
+  const translateError = (message: string): string => {
+    const translations: { [key: string]: string } = {
+      "For security purposes, you can only request this after": "Güvenlik nedeniyle, bu işlemi ancak",
+      "seconds": "saniye sonra yapabilirsiniz",
+      "Invalid login credentials": "Geçersiz e-posta veya şifre",
+      "Email not confirmed": "E-posta adresi henüz doğrulanmamış",
+      "User already registered": "Bu e-posta adresi zaten kayıtlı",
+      "Password should be at least 6 characters": "Şifre en az 6 karakter olmalıdır",
+      "Unable to validate email address: invalid format": "Geçersiz e-posta formatı",
+      "Email rate limit exceeded": "Çok fazla istek gönderildi. Lütfen bekleyin.",
+      "Signup requires a valid password": "Geçerli bir şifre giriniz",
+    };
+
+    // Tam eşleşme kontrolü
+    if (translations[message]) {
+      return translations[message];
+    }
+
+    // Kısmi eşleşme kontrolü (örn: "For security purposes, you can only request this after 26 seconds")
+    for (const [eng, tr] of Object.entries(translations)) {
+      if (message.toLowerCase().includes(eng.toLowerCase())) {
+        // Sayıyı çıkar ve Türkçe mesaj oluştur
+        const match = message.match(/(\d+)/);
+        if (match && eng.includes("security purposes")) {
+          return `Güvenlik nedeniyle, bu işlemi ancak ${match[1]} saniye sonra yapabilirsiniz`;
+        }
+        return tr;
+      }
+    }
+
+    return message;
+  };
+
+  const handleResendEmail = async () => {
+    if (resendCountdown > 0 || resendLoading) return;
+    
+    setResendLoading(true);
+    try {
+      const redirectUrl = `${window.location.origin}/auth/callback`;
+      
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email,
+        options: {
+          emailRedirectTo: redirectUrl,
+        }
+      });
+
+      if (error) throw error;
+
+      toast.success("Doğrulama e-postası tekrar gönderildi!");
+      setResendCountdown(60); // 60 saniye beklet (Supabase sınırı)
+    } catch (error: any) {
+      console.error('Resend error:', error);
+      const turkishMessage = translateError(error.message || "E-posta gönderilemedi. Lütfen tekrar deneyin.");
+      toast.error(turkishMessage);
+      
+      // Eğer rate limit hatası varsa, kalan süreyi parse et ve countdown'u ayarla
+      const match = error.message?.match(/(\d+)\s*seconds?/i);
+      if (match) {
+        setResendCountdown(parseInt(match[1]));
+      }
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  const validateForm = () => {
+    const newErrors: {[key: string]: string} = {};
+    
+    if (!isLogin) {
+      if (!firstName.trim()) {
+        newErrors.firstName = "İsim gereklidir";
+      }
+      if (!lastName.trim()) {
+        newErrors.lastName = "Soyisim gereklidir";
+      }
+      if (password !== confirmPassword) {
+        newErrors.confirmPassword = "Şifreler eşleşmiyor";
+      }
+      if (password.length < 6) {
+        newErrors.password = "Şifre en az 6 karakter olmalıdır";
+      }
+    }
+    
+    if (!email.includes('@')) {
+      newErrors.email = "Geçerli bir e-posta adresi girin";
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!validateForm()) {
+      return;
+    }
+    
     setLoading(true);
 
     try {
@@ -26,9 +150,10 @@ export default function Login() {
         await signIn(email, password);
         navigate("/");
       } else {
-        await signUp(email, password, fullName);
+        await signUp(email, password, firstName, lastName);
         setShowVerification(true);
         setPassword("");
+        setConfirmPassword("");
       }
     } catch (error) {
       // Error is already handled in auth context
@@ -87,12 +212,19 @@ export default function Login() {
               <Button
                 variant="outline"
                 className="w-full mb-3"
-                onClick={() => {
-                  // TODO: Resend verification email
-                  console.log("Resend verification email");
-                }}
+                onClick={handleResendEmail}
+                disabled={resendCountdown > 0 || resendLoading}
               >
-                Tekrar Gönder
+                {resendLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Gönderiliyor...
+                  </>
+                ) : resendCountdown > 0 ? (
+                  <>Tekrar Gönder ({resendCountdown}s)</>
+                ) : (
+                  <>Tekrar Gönder</>
+                )}
               </Button>
               <Button
                 variant="ghost"
@@ -101,7 +233,10 @@ export default function Login() {
                   setShowVerification(false);
                   setIsLogin(true);
                   setEmail("");
-                  setFullName("");
+                  setFirstName("");
+                  setLastName("");
+                  setConfirmPassword("");
+                  setResendCountdown(0);
                 }}
               >
                 Giriş Sayfasına Dön
@@ -143,20 +278,50 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Ad Soyad</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-                  <Input
-                    type="text"
-                    placeholder="Ad Soyad"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="pl-10"
-                    required
-                  />
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">İsim</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                      <Input
+                        type="text"
+                        placeholder="İsim"
+                        value={firstName}
+                        onChange={(e) => {
+                          setFirstName(e.target.value);
+                          setErrors({...errors, firstName: ''});
+                        }}
+                        className={`pl-10 ${errors.firstName ? 'border-destructive' : ''}`}
+                        required
+                      />
+                    </div>
+                    {errors.firstName && (
+                      <p className="text-xs text-destructive">{errors.firstName}</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Soyisim</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                      <Input
+                        type="text"
+                        placeholder="Soyisim"
+                        value={lastName}
+                        onChange={(e) => {
+                          setLastName(e.target.value);
+                          setErrors({...errors, lastName: ''});
+                        }}
+                        className={`pl-10 ${errors.lastName ? 'border-destructive' : ''}`}
+                        required
+                      />
+                    </div>
+                    {errors.lastName && (
+                      <p className="text-xs text-destructive">{errors.lastName}</p>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </>
             )}
 
             <div className="space-y-2">
@@ -167,11 +332,17 @@ export default function Login() {
                   type="email"
                   placeholder="ornek@email.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-10"
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setErrors({...errors, email: ''});
+                  }}
+                  className={`pl-10 ${errors.email ? 'border-destructive' : ''}`}
                   required
                 />
               </div>
+              {errors.email && (
+                <p className="text-xs text-destructive">{errors.email}</p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -182,8 +353,11 @@ export default function Login() {
                   type={showPassword ? "text" : "password"}
                   placeholder="••••••••"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-10"
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setErrors({...errors, password: ''});
+                  }}
+                  className={`pl-10 pr-10 ${errors.password ? 'border-destructive' : ''}`}
                   required
                   minLength={6}
                 />
@@ -199,7 +373,45 @@ export default function Login() {
                   )}
                 </button>
               </div>
+              {errors.password && (
+                <p className="text-xs text-destructive">{errors.password}</p>
+              )}
             </div>
+
+            {!isLogin && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Şifre Doğrulama</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                  <Input
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value);
+                      setErrors({...errors, confirmPassword: ''});
+                    }}
+                    className={`pl-10 pr-10 ${errors.confirmPassword ? 'border-destructive' : ''}`}
+                    required
+                    minLength={6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showConfirmPassword ? (
+                      <EyeOff className="w-5 h-5" />
+                    ) : (
+                      <Eye className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
+                {errors.confirmPassword && (
+                  <p className="text-xs text-destructive">{errors.confirmPassword}</p>
+                )}
+              </div>
+            )}
 
             {isLogin && (
               <div className="flex items-center justify-end">
@@ -234,6 +446,8 @@ export default function Login() {
                 onClick={() => {
                   setIsLogin(!isLogin);
                   setPassword("");
+                  setConfirmPassword("");
+                  setErrors({});
                 }}
                 className="text-primary hover:underline font-medium"
               >

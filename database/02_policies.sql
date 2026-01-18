@@ -18,10 +18,12 @@ CREATE POLICY "Users can view own profile"
   USING (auth.uid() = id);
 
 -- Kullanıcılar kendi profillerini güncelleyebilir
+DROP POLICY IF EXISTS "Users can update own profile" ON user_profiles;
 CREATE POLICY "Users can update own profile"
   ON user_profiles FOR UPDATE
   TO authenticated
-  USING (auth.uid() = id);
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
 
 -- Kullanıcılar kendi profillerini oluşturabilir (signup için)
 CREATE POLICY "Users can insert own profile"

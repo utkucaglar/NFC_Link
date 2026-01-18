@@ -261,6 +261,7 @@ export default function Products() {
                       size="sm"
                       onClick={() => addToCart({
                         id: product.id,
+                        productId: product.id,
                         name: product.name,
                         price: product.price,
                         image: getProductImage(product.image_url, product.category)

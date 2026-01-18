@@ -1,0 +1,1249 @@
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Package,
+  Plus,
+  Search,
+  Edit,
+  Trash2,
+  Eye,
+  EyeOff,
+  Save,
+  X,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
+  Pencil,
+  Check,
+} from "lucide-react";
+import { AdminLayout } from "@/components/layout/AdminLayout";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { supabase } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import productCard from "@/assets/product-nfc-card.png";
+import productBand from "@/assets/product-nfc-band.png";
+import productPetTag from "@/assets/product-pet-tag.png";
+
+// Helper function to get product image with fallback
+const getProductImage = (imageUrl: string | null, category: string) => {
+  if (imageUrl && imageUrl.startsWith('http')) {
+    return imageUrl;
+  }
+  if (category === "Profesyonel" || category === "Premium") return productCard;
+  if (category === "Spor & Etkinlik") return productBand;
+  if (category === "Evcil Hayvan") return productPetTag;
+  return productCard;
+};
+
+interface Category {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+}
+
+interface Product {
+  id: number;
+  name: string;
+  description: string | null;
+  short_description: string | null;
+  long_description: string | null;
+  price: number;
+  category: string;
+  category_id: number | null;
+  image_url: string | null;
+  images: string[] | null;
+  features: string[] | null;
+  colors: string[] | null;
+  specs: Record<string, string> | null;
+  monthly_subscription_fee: number;
+  stock_quantity: number;
+  sku: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+const emptyProduct: Partial<Product> = {
+  name: "",
+  description: "",
+  short_description: "",
+  long_description: "",
+  price: 0,
+  category: "",
+  category_id: null,
+  image_url: "",
+  features: [],
+  colors: [],
+  specs: {},
+  monthly_subscription_fee: 29,
+  stock_quantity: 0,
+  sku: "",
+  is_active: true,
+  sort_order: 0,
+};
+
+export default function AdminProducts() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showModal, setShowModal] = useState(false);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
+  const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"basic" | "details" | "specs">("basic");
+  
+  // Feature, color, spec ekleme için state'ler
+  const [newFeature, setNewFeature] = useState("");
+  const [newColor, setNewColor] = useState("");
+  const [newSpecKey, setNewSpecKey] = useState("");
+  const [newSpecValue, setNewSpecValue] = useState("");
+  
+  // Inline editing state'leri
+  const [editingFeatureIndex, setEditingFeatureIndex] = useState<number | null>(null);
+  const [editingFeatureValue, setEditingFeatureValue] = useState("");
+  const [editingColorIndex, setEditingColorIndex] = useState<number | null>(null);
+  const [editingColorValue, setEditingColorValue] = useState("");
+  const [editingSpecKey, setEditingSpecKey] = useState<string | null>(null);
+  const [editingSpecKeyValue, setEditingSpecKeyValue] = useState("");
+  const [editingSpecValueValue, setEditingSpecValueValue] = useState("");
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      // Ürünleri getir
+      const { data: productsData, error: productsError } = await supabase
+        .from("products")
+        .select("*")
+        .order("sort_order", { ascending: true });
+
+      if (productsError) throw productsError;
+      setProducts(productsData || []);
+
+      // Kategorileri getir
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from("categories")
+        .select("*")
+        .order("sort_order", { ascending: true });
+
+      if (!categoriesError && categoriesData) {
+        setCategories(categoriesData);
+      }
+    } catch (error) {
+      console.error("Veri yüklenirken hata:", error);
+      toast.error("Veriler yüklenemedi");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!editingProduct?.name || !editingProduct?.price || !editingProduct?.category) {
+      toast.error("Lütfen zorunlu alanları doldurun (Ad, Fiyat, Kategori)");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const productData = {
+        name: editingProduct.name,
+        description: editingProduct.description || null,
+        short_description: editingProduct.short_description || null,
+        long_description: editingProduct.long_description || null,
+        price: editingProduct.price,
+        category: editingProduct.category,
+        category_id: editingProduct.category_id || null,
+        image_url: editingProduct.image_url || null,
+        features: editingProduct.features || null,
+        colors: editingProduct.colors || null,
+        specs: editingProduct.specs || null,
+        monthly_subscription_fee: editingProduct.monthly_subscription_fee || 29,
+        stock_quantity: editingProduct.stock_quantity || 0,
+        sku: editingProduct.sku || null,
+        is_active: editingProduct.is_active ?? true,
+        sort_order: editingProduct.sort_order || 0,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (editingProduct.id) {
+        const { error } = await supabase
+          .from("products")
+          .update(productData)
+          .eq("id", editingProduct.id);
+
+        if (error) throw error;
+        toast.success("Ürün güncellendi");
+      } else {
+        const { error } = await supabase
+          .from("products")
+          .insert({
+            ...productData,
+            created_at: new Date().toISOString(),
+          });
+
+        if (error) throw error;
+        toast.success("Ürün oluşturuldu");
+      }
+
+      setShowModal(false);
+      setEditingProduct(null);
+      setActiveTab("basic");
+      fetchData();
+    } catch (error: any) {
+      console.error("Kaydetme hatası:", error);
+      toast.error(error.message || "Ürün kaydedilemedi");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (productId: number) => {
+    try {
+      const { error } = await supabase
+        .from("products")
+        .delete()
+        .eq("id", productId);
+
+      if (error) throw error;
+
+      setProducts(products.filter(p => p.id !== productId));
+      toast.success("Ürün silindi");
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error("Silme hatası:", error);
+      toast.error("Ürün silinemedi");
+    }
+  };
+
+  const toggleActive = async (product: Product) => {
+    try {
+      const { error } = await supabase
+        .from("products")
+        .update({ is_active: !product.is_active, updated_at: new Date().toISOString() })
+        .eq("id", product.id);
+
+      if (error) throw error;
+
+      setProducts(products.map(p =>
+        p.id === product.id ? { ...p, is_active: !p.is_active } : p
+      ));
+      toast.success(product.is_active ? "Ürün pasife alındı" : "Ürün aktif edildi");
+    } catch (error) {
+      console.error("Güncelleme hatası:", error);
+      toast.error("Durum güncellenemedi");
+    }
+  };
+
+  // Feature ekleme/silme/düzenleme/sıralama
+  const addFeature = () => {
+    if (!newFeature.trim()) return;
+    const features = editingProduct?.features || [];
+    setEditingProduct({ ...editingProduct, features: [...features, newFeature.trim()] });
+    setNewFeature("");
+  };
+
+  const removeFeature = (index: number) => {
+    const features = editingProduct?.features || [];
+    setEditingProduct({ ...editingProduct, features: features.filter((_, i) => i !== index) });
+  };
+
+  const moveFeature = (index: number, direction: 'up' | 'down') => {
+    const features = [...(editingProduct?.features || [])];
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= features.length) return;
+    [features[index], features[newIndex]] = [features[newIndex], features[index]];
+    setEditingProduct({ ...editingProduct, features });
+  };
+
+  const startEditFeature = (index: number) => {
+    setEditingFeatureIndex(index);
+    setEditingFeatureValue(editingProduct?.features?.[index] || "");
+  };
+
+  const saveEditFeature = () => {
+    if (editingFeatureIndex === null || !editingFeatureValue.trim()) return;
+    const features = [...(editingProduct?.features || [])];
+    features[editingFeatureIndex] = editingFeatureValue.trim();
+    setEditingProduct({ ...editingProduct, features });
+    setEditingFeatureIndex(null);
+    setEditingFeatureValue("");
+  };
+
+  // Color ekleme/silme/düzenleme/sıralama
+  const addColor = () => {
+    if (!newColor.trim()) return;
+    const colors = editingProduct?.colors || [];
+    setEditingProduct({ ...editingProduct, colors: [...colors, newColor.trim()] });
+    setNewColor("");
+  };
+
+  const removeColor = (index: number) => {
+    const colors = editingProduct?.colors || [];
+    setEditingProduct({ ...editingProduct, colors: colors.filter((_, i) => i !== index) });
+  };
+
+  const moveColor = (index: number, direction: 'up' | 'down') => {
+    const colors = [...(editingProduct?.colors || [])];
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= colors.length) return;
+    [colors[index], colors[newIndex]] = [colors[newIndex], colors[index]];
+    setEditingProduct({ ...editingProduct, colors });
+  };
+
+  const startEditColor = (index: number) => {
+    setEditingColorIndex(index);
+    setEditingColorValue(editingProduct?.colors?.[index] || "");
+  };
+
+  const saveEditColor = () => {
+    if (editingColorIndex === null || !editingColorValue.trim()) return;
+    const colors = [...(editingProduct?.colors || [])];
+    colors[editingColorIndex] = editingColorValue.trim();
+    setEditingProduct({ ...editingProduct, colors });
+    setEditingColorIndex(null);
+    setEditingColorValue("");
+  };
+
+  // Spec ekleme/silme/düzenleme/sıralama
+  const addSpec = () => {
+    if (!newSpecKey.trim() || !newSpecValue.trim()) return;
+    const specs = editingProduct?.specs || {};
+    setEditingProduct({ ...editingProduct, specs: { ...specs, [newSpecKey.trim()]: newSpecValue.trim() } });
+    setNewSpecKey("");
+    setNewSpecValue("");
+  };
+
+  const removeSpec = (key: string) => {
+    const specs = { ...(editingProduct?.specs || {}) };
+    delete specs[key];
+    setEditingProduct({ ...editingProduct, specs });
+  };
+
+  const moveSpec = (key: string, direction: 'up' | 'down') => {
+    const specs = editingProduct?.specs || {};
+    const entries = Object.entries(specs);
+    const index = entries.findIndex(([k]) => k === key);
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= entries.length) return;
+    [entries[index], entries[newIndex]] = [entries[newIndex], entries[index]];
+    setEditingProduct({ ...editingProduct, specs: Object.fromEntries(entries) });
+  };
+
+  const startEditSpec = (key: string, value: string) => {
+    setEditingSpecKey(key);
+    setEditingSpecKeyValue(key);
+    setEditingSpecValueValue(value);
+  };
+
+  const saveEditSpec = () => {
+    if (!editingSpecKey || !editingSpecKeyValue.trim() || !editingSpecValueValue.trim()) return;
+    const specs = { ...(editingProduct?.specs || {}) };
+    // Eski key'i sil, yeni key ile ekle
+    delete specs[editingSpecKey];
+    // Sıralamayı koru
+    const entries = Object.entries(editingProduct?.specs || {});
+    const newEntries = entries.map(([k, v]) => 
+      k === editingSpecKey ? [editingSpecKeyValue.trim(), editingSpecValueValue.trim()] : [k, v]
+    );
+    setEditingProduct({ ...editingProduct, specs: Object.fromEntries(newEntries) });
+    setEditingSpecKey(null);
+    setEditingSpecKeyValue("");
+    setEditingSpecValueValue("");
+  };
+
+  // Kategori kaydetme
+  const handleSaveCategory = async () => {
+    if (!editingCategory?.name) {
+      toast.error("Kategori adı gerekli");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (editingCategory.id) {
+        const { error } = await supabase
+          .from("categories")
+          .update({
+            name: editingCategory.name,
+            description: editingCategory.description,
+            is_active: editingCategory.is_active ?? true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", editingCategory.id);
+
+        if (error) throw error;
+        toast.success("Kategori güncellendi");
+      } else {
+        const { error } = await supabase
+          .from("categories")
+          .insert({
+            name: editingCategory.name,
+            description: editingCategory.description,
+            is_active: editingCategory.is_active ?? true,
+            sort_order: categories.length,
+          });
+
+        if (error) throw error;
+        toast.success("Kategori oluşturuldu");
+      }
+
+      setShowCategoryModal(false);
+      setEditingCategory(null);
+      fetchData();
+    } catch (error: any) {
+      console.error("Kategori kaydetme hatası:", error);
+      if (error.message?.includes("duplicate")) {
+        toast.error("Bu kategori adı zaten mevcut");
+      } else {
+        toast.error("Kategori kaydedilemedi");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteCategory = async (categoryId: number) => {
+    try {
+      const { error } = await supabase
+        .from("categories")
+        .delete()
+        .eq("id", categoryId);
+
+      if (error) throw error;
+
+      setCategories(categories.filter(c => c.id !== categoryId));
+      toast.success("Kategori silindi");
+    } catch (error) {
+      console.error("Kategori silme hatası:", error);
+      toast.error("Kategori silinemedi (ürünler bu kategoriye bağlı olabilir)");
+    }
+  };
+
+  const filteredProducts = products.filter(product =>
+    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    product.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    product.sku?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  return (
+    <AdminLayout>
+      <div className="space-y-6">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex flex-col md:flex-row md:items-center justify-between gap-4"
+        >
+          <div>
+            <h1 className="text-3xl font-bold mb-2">
+              <span className="text-gradient">Ürünler</span>
+            </h1>
+            <p className="text-muted-foreground">
+              {products.length} ürün, {products.filter(p => p.is_active).length} aktif
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingCategory({ name: "", description: "", is_active: true });
+                setShowCategoryModal(true);
+              }}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Yeni Kategori
+            </Button>
+            <Button
+              onClick={() => {
+                setEditingProduct(emptyProduct);
+                setActiveTab("basic");
+                setShowModal(true);
+              }}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Yeni Ürün
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Categories Row */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="flex gap-2 flex-wrap"
+        >
+          <span className="text-sm text-muted-foreground py-2">Kategoriler:</span>
+          {categories.map((cat) => (
+            <Badge
+              key={cat.id}
+              variant="outline"
+              className={cn(
+                "cursor-pointer hover:bg-primary/10 transition-colors",
+                !cat.is_active && "opacity-50"
+              )}
+              onClick={() => {
+                setEditingCategory(cat);
+                setShowCategoryModal(true);
+              }}
+            >
+              {cat.name}
+              <Edit className="w-3 h-3 ml-1" />
+            </Badge>
+          ))}
+        </motion.div>
+
+        {/* Search */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <Input
+              placeholder="Ürün adı, kategori veya SKU ara..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        </motion.div>
+
+        {/* Products Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {filteredProducts.map((product, index) => (
+            <motion.div
+              key={product.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.05 }}
+              className={cn(
+                "bg-card rounded-2xl shadow-card border border-border/50 overflow-hidden group",
+                !product.is_active && "opacity-60"
+              )}
+            >
+              <div className="aspect-square bg-muted/30 relative overflow-hidden">
+                <img
+                  src={getProductImage(product.image_url, product.category)}
+                  alt={product.name}
+                  className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300 p-4"
+                />
+                {!product.is_active && (
+                  <div className="absolute inset-0 bg-background/50 flex items-center justify-center">
+                    <Badge variant="secondary">Pasif</Badge>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <p className="text-xs text-primary font-medium mb-1">{product.category}</p>
+                    <h3 className="font-semibold line-clamp-1">{product.name}</h3>
+                  </div>
+                  <Badge variant="outline" className="shrink-0">
+                    {product.stock_quantity} stok
+                  </Badge>
+                </div>
+                
+                <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                  {product.short_description || product.description}
+                </p>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-xl font-bold text-gradient">
+                    ₺{product.price.toLocaleString("tr-TR")}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => toggleActive(product)}
+                      title={product.is_active ? "Pasife Al" : "Aktif Et"}
+                    >
+                      {product.is_active ? (
+                        <Eye className="w-4 h-4" />
+                      ) : (
+                        <EyeOff className="w-4 h-4" />
+                      )}
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingProduct({
+                          ...product,
+                          features: product.features || [],
+                          colors: product.colors || [],
+                          specs: product.specs || {},
+                        });
+                        setActiveTab("basic");
+                        setShowModal(true);
+                      }}
+                    >
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setDeleteConfirm(product.id)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+
+        {filteredProducts.length === 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-center py-16 bg-card rounded-2xl"
+          >
+            <Package className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
+            <p className="text-muted-foreground">Ürün bulunamadı</p>
+          </motion.div>
+        )}
+      </div>
+
+      {/* Product Modal */}
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingProduct?.id ? "Ürünü Düzenle" : "Yeni Ürün"}
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Tabs */}
+          <div className="flex gap-2 border-b border-border pb-4">
+            <Button
+              variant={activeTab === "basic" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab("basic")}
+            >
+              Temel Bilgiler
+            </Button>
+            <Button
+              variant={activeTab === "details" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab("details")}
+            >
+              Özellikler & Renkler
+            </Button>
+            <Button
+              variant={activeTab === "specs" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab("specs")}
+            >
+              Teknik Bilgiler
+            </Button>
+          </div>
+
+          <div className="space-y-6 py-4">
+            {/* Basic Info Tab */}
+            {activeTab === "basic" && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <Label htmlFor="name">Ürün Adı *</Label>
+                    <Input
+                      id="name"
+                      value={editingProduct?.name || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                      placeholder="NFC Kartvizit - Premium"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="category">Kategori *</Label>
+                    <select
+                      id="category"
+                      value={editingProduct?.category || ""}
+                      onChange={(e) => {
+                        const cat = categories.find(c => c.name === e.target.value);
+                        setEditingProduct({ 
+                          ...editingProduct, 
+                          category: e.target.value,
+                          category_id: cat?.id || null
+                        });
+                      }}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    >
+                      <option value="">Seçin...</option>
+                      {categories.filter(c => c.is_active).map((cat) => (
+                        <option key={cat.id} value={cat.name}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="sku">SKU (Stok Kodu)</Label>
+                    <Input
+                      id="sku"
+                      value={editingProduct?.sku || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })}
+                      placeholder="NFC-CARD-001"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="price">Fiyat (₺) *</Label>
+                    <Input
+                      id="price"
+                      type="number"
+                      value={editingProduct?.price || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, price: parseFloat(e.target.value) || 0 })}
+                      placeholder="199"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="subscription">Aylık Abonelik (₺)</Label>
+                    <Input
+                      id="subscription"
+                      type="number"
+                      value={editingProduct?.monthly_subscription_fee || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, monthly_subscription_fee: parseFloat(e.target.value) || 0 })}
+                      placeholder="29"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="stock">Stok Miktarı</Label>
+                    <Input
+                      id="stock"
+                      type="number"
+                      value={editingProduct?.stock_quantity || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stock_quantity: parseInt(e.target.value) || 0 })}
+                      placeholder="100"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="sort">Sıralama</Label>
+                    <Input
+                      id="sort"
+                      type="number"
+                      value={editingProduct?.sort_order || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, sort_order: parseInt(e.target.value) || 0 })}
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="image">Görsel URL</Label>
+                  <Input
+                    id="image"
+                    value={editingProduct?.image_url || ""}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })}
+                    placeholder="https://example.com/image.jpg"
+                  />
+                  <div className="mt-2 w-24 h-24 rounded-lg overflow-hidden bg-muted">
+                    <img
+                      src={getProductImage(editingProduct?.image_url || null, editingProduct?.category || "")}
+                      alt="Preview"
+                      className="w-full h-full object-contain p-2"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="short_description">Kısa Açıklama</Label>
+                  <Input
+                    id="short_description"
+                    value={editingProduct?.short_description || ""}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, short_description: e.target.value })}
+                    placeholder="Kart listesinde görünecek kısa açıklama..."
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="description">Açıklama</Label>
+                  <textarea
+                    id="description"
+                    value={editingProduct?.description || ""}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })}
+                    placeholder="Ürün açıklaması..."
+                    className="w-full min-h-[80px] p-3 rounded-md border border-input bg-background text-sm resize-none"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="long_description">Detaylı Açıklama</Label>
+                  <textarea
+                    id="long_description"
+                    value={editingProduct?.long_description || ""}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, long_description: e.target.value })}
+                    placeholder="Ürün detay sayfasında görünecek uzun açıklama..."
+                    className="w-full min-h-[120px] p-3 rounded-md border border-input bg-background text-sm resize-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-muted/30 rounded-xl">
+                  <div>
+                    <p className="font-medium">Ürün Durumu</p>
+                    <p className="text-sm text-muted-foreground">Pasif ürünler müşterilere gösterilmez</p>
+                  </div>
+                  <Switch
+                    checked={editingProduct?.is_active ?? true}
+                    onCheckedChange={(checked) => setEditingProduct({ ...editingProduct, is_active: checked })}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Features & Colors Tab */}
+            {activeTab === "details" && (
+              <>
+                {/* Features */}
+                <div>
+                  <Label className="mb-3 block">Özellikler (sürükleyerek sıralayın)</Label>
+                  <div className="space-y-2 mb-3">
+                    {(editingProduct?.features || []).map((feature, index) => (
+                      <div key={index} className="flex items-center gap-2 bg-muted/30 rounded-lg p-2 group">
+                        {/* Sıralama butonları */}
+                        <div className="flex flex-col gap-0.5">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-6 h-6 opacity-50 hover:opacity-100"
+                            onClick={() => moveFeature(index, 'up')}
+                            disabled={index === 0}
+                          >
+                            <ArrowUp className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-6 h-6 opacity-50 hover:opacity-100"
+                            onClick={() => moveFeature(index, 'down')}
+                            disabled={index === (editingProduct?.features?.length || 0) - 1}
+                          >
+                            <ArrowDown className="w-3 h-3" />
+                          </Button>
+                        </div>
+                        
+                        {/* İçerik - düzenleme modu */}
+                        {editingFeatureIndex === index ? (
+                          <div className="flex-1 flex gap-2">
+                            <Input
+                              value={editingFeatureValue}
+                              onChange={(e) => setEditingFeatureValue(e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && saveEditFeature()}
+                              autoFocus
+                              className="flex-1"
+                            />
+                            <Button size="icon" variant="ghost" className="w-8 h-8 text-green-600" onClick={saveEditFeature}>
+                              <Check className="w-4 h-4" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="w-8 h-8" onClick={() => setEditingFeatureIndex(null)}>
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="flex-1 text-sm">{feature}</span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => startEditFeature(index)}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-8 h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => removeFeature(index)}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={newFeature}
+                      onChange={(e) => setNewFeature(e.target.value)}
+                      placeholder="Yeni özellik ekle..."
+                      onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addFeature())}
+                    />
+                    <Button onClick={addFeature} disabled={!newFeature.trim()}>
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Colors */}
+                <div>
+                  <Label className="mb-3 block">Renk Seçenekleri</Label>
+                  <div className="space-y-2 mb-3">
+                    {(editingProduct?.colors || []).map((color, index) => (
+                      <div key={index} className="flex items-center gap-2 bg-muted/30 rounded-lg p-2 group">
+                        {/* Sıralama butonları */}
+                        <div className="flex flex-col gap-0.5">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-6 h-6 opacity-50 hover:opacity-100"
+                            onClick={() => moveColor(index, 'up')}
+                            disabled={index === 0}
+                          >
+                            <ArrowUp className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-6 h-6 opacity-50 hover:opacity-100"
+                            onClick={() => moveColor(index, 'down')}
+                            disabled={index === (editingProduct?.colors?.length || 0) - 1}
+                          >
+                            <ArrowDown className="w-3 h-3" />
+                          </Button>
+                        </div>
+                        
+                        {/* İçerik - düzenleme modu */}
+                        {editingColorIndex === index ? (
+                          <div className="flex-1 flex gap-2">
+                            <Input
+                              value={editingColorValue}
+                              onChange={(e) => setEditingColorValue(e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && saveEditColor()}
+                              autoFocus
+                              className="flex-1"
+                            />
+                            <Button size="icon" variant="ghost" className="w-8 h-8 text-green-600" onClick={saveEditColor}>
+                              <Check className="w-4 h-4" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="w-8 h-8" onClick={() => setEditingColorIndex(null)}>
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="flex-1 text-sm font-medium">{color}</span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => startEditColor(index)}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-8 h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => removeColor(index)}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={newColor}
+                      onChange={(e) => setNewColor(e.target.value)}
+                      placeholder="Yeni renk ekle..."
+                      onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addColor())}
+                    />
+                    <Button onClick={addColor} disabled={!newColor.trim()}>
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Specs Tab */}
+            {activeTab === "specs" && (
+              <div>
+                <Label className="mb-3 block">Teknik Özellikler (sürükleyerek sıralayın)</Label>
+                <div className="space-y-2 mb-4">
+                  {Object.entries(editingProduct?.specs || {}).map(([key, value], index, arr) => (
+                    <div key={key} className="flex items-center gap-2 bg-muted/30 rounded-lg p-3 group">
+                      {/* Sıralama butonları */}
+                      <div className="flex flex-col gap-0.5">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="w-6 h-6 opacity-50 hover:opacity-100"
+                          onClick={() => moveSpec(key, 'up')}
+                          disabled={index === 0}
+                        >
+                          <ArrowUp className="w-3 h-3" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="w-6 h-6 opacity-50 hover:opacity-100"
+                          onClick={() => moveSpec(key, 'down')}
+                          disabled={index === arr.length - 1}
+                        >
+                          <ArrowDown className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      
+                      {/* İçerik - düzenleme modu */}
+                      {editingSpecKey === key ? (
+                        <div className="flex-1 flex gap-2">
+                          <Input
+                            value={editingSpecKeyValue}
+                            onChange={(e) => setEditingSpecKeyValue(e.target.value)}
+                            placeholder="Özellik adı"
+                            className="w-1/3"
+                          />
+                          <Input
+                            value={editingSpecValueValue}
+                            onChange={(e) => setEditingSpecValueValue(e.target.value)}
+                            placeholder="Değer"
+                            onKeyDown={(e) => e.key === "Enter" && saveEditSpec()}
+                            className="flex-1"
+                          />
+                          <Button size="icon" variant="ghost" className="w-8 h-8 text-green-600" onClick={saveEditSpec}>
+                            <Check className="w-4 h-4" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="w-8 h-8" onClick={() => setEditingSpecKey(null)}>
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="font-medium text-sm w-1/3">{key}</span>
+                          <span className="text-sm text-muted-foreground flex-1">{value}</span>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => startEditSpec(key, value)}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-8 h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => removeSpec(key)}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="p-4 border-2 border-dashed border-border rounded-lg">
+                  <p className="text-sm font-medium mb-3">Yeni Teknik Özellik Ekle</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      value={newSpecKey}
+                      onChange={(e) => setNewSpecKey(e.target.value)}
+                      placeholder="Özellik adı (Boyut, Malzeme...)"
+                    />
+                    <div className="flex gap-2">
+                      <Input
+                        value={newSpecValue}
+                        onChange={(e) => setNewSpecValue(e.target.value)}
+                        placeholder="Değer"
+                        onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addSpec())}
+                      />
+                      <Button onClick={addSpec} disabled={!newSpecKey.trim() || !newSpecValue.trim()}>
+                        <Plus className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-4 border-t border-border">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setShowModal(false);
+                  setEditingProduct(null);
+                  setActiveTab("basic");
+                }}
+              >
+                İptal
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Kaydet
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Category Modal */}
+      <Dialog open={showCategoryModal} onOpenChange={setShowCategoryModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {editingCategory?.id ? "Kategoriyi Düzenle" : "Yeni Kategori"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="catName">Kategori Adı *</Label>
+              <Input
+                id="catName"
+                value={editingCategory?.name || ""}
+                onChange={(e) => setEditingCategory({ ...editingCategory, name: e.target.value })}
+                placeholder="Profesyonel"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="catDesc">Açıklama</Label>
+              <Input
+                id="catDesc"
+                value={editingCategory?.description || ""}
+                onChange={(e) => setEditingCategory({ ...editingCategory, description: e.target.value })}
+                placeholder="Kategori açıklaması..."
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-muted/30 rounded-xl">
+              <div>
+                <p className="font-medium">Kategori Durumu</p>
+                <p className="text-sm text-muted-foreground">Pasif kategoriler ürün eklerken görünmez</p>
+              </div>
+              <Switch
+                checked={editingCategory?.is_active ?? true}
+                onCheckedChange={(checked) => setEditingCategory({ ...editingCategory, is_active: checked })}
+              />
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-border">
+              {editingCategory?.id && (
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    if (editingCategory.id) {
+                      deleteCategory(editingCategory.id);
+                      setShowCategoryModal(false);
+                      setEditingCategory(null);
+                    }
+                  }}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Sil
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setShowCategoryModal(false);
+                  setEditingCategory(null);
+                }}
+              >
+                İptal
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleSaveCategory}
+                disabled={saving}
+              >
+                {saving ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Kaydet
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <Dialog open={deleteConfirm !== null} onOpenChange={() => setDeleteConfirm(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Ürünü Sil</DialogTitle>
+          </DialogHeader>
+          <p className="text-muted-foreground">
+            Bu ürünü silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.
+          </p>
+          <div className="flex gap-3 mt-4">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => setDeleteConfirm(null)}
+            >
+              İptal
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1"
+              onClick={() => deleteConfirm && handleDelete(deleteConfirm)}
+            >
+              Sil
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </AdminLayout>
+  );
+}

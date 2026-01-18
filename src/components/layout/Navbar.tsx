@@ -1,17 +1,24 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ShoppingCart, Menu, X, Wifi, User, LogOut } from "lucide-react";
+import { ShoppingCart, Menu, X, Wifi, User, LogOut, Settings } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
 
-const navItems = [
+// Müşteri için navigasyon linkleri
+const customerNavItems = [
   { name: "Anasayfa", path: "/" },
   { name: "Ürünler", path: "/products" },
   { name: "NFC'lerim", path: "/my-nfc" },
   { name: "Siparişlerim", path: "/orders" },
+];
+
+// Admin için navigasyon linkleri (sepet, NFC'lerim, siparişlerim yok)
+const adminNavItems = [
+  { name: "Anasayfa", path: "/" },
+  { name: "Ürünler", path: "/products" },
 ];
 
 export function Navbar() {
@@ -19,7 +26,10 @@ export function Navbar() {
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const { cartItemCount } = useCart();
-  const { user, profile, signOut, isAuthenticated } = useAuth();
+  const { user, profile, signOut, isAuthenticated, isAdmin } = useAuth();
+  
+  // Admin mi customer mı buna göre nav items seç
+  const navItems = isAdmin() ? adminNavItems : customerNavItems;
 
   const handleLogout = async () => {
     try {
@@ -68,26 +78,38 @@ export function Navbar() {
 
           {/* Right Side Actions */}
           <div className="flex items-center gap-3">
-            {/* Cart Button */}
-            <Link to="/cart" className="relative">
-              <Button variant="ghost" size="icon" className="relative">
-                <ShoppingCart className="w-5 h-5" />
-                {cartItemCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-5 h-5 gradient-primary rounded-full text-xs text-primary-foreground flex items-center justify-center font-semibold">
-                    {cartItemCount}
-                  </span>
-                )}
-              </Button>
-            </Link>
+            {/* Cart Button - Admin için gizle */}
+            {!isAdmin() && (
+              <Link to="/cart" className="relative">
+                <Button variant="ghost" size="icon" className="relative">
+                  <ShoppingCart className="w-5 h-5" />
+                  {cartItemCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 gradient-primary rounded-full text-xs text-primary-foreground flex items-center justify-center font-semibold">
+                      {cartItemCount}
+                    </span>
+                  )}
+                </Button>
+              </Link>
+            )}
 
             {/* Auth Buttons - Desktop */}
             <div className="hidden md:flex items-center gap-2">
               {isAuthenticated() ? (
                 <>
+                  {profile?.role === 'admin' && (
+                    <Link to="/admin">
+                      <Button variant="outline" size="sm" className="gap-2">
+                        <Settings className="w-4 h-4" />
+                        Admin Panel
+                      </Button>
+                    </Link>
+                  )}
                   <Link to="/profile">
                     <Button variant="ghost" size="sm" className="gap-2">
                       <User className="w-4 h-4" />
-                      {profile?.full_name || user?.email?.split('@')[0]}
+                      {profile?.first_name && profile?.last_name
+                        ? `${profile.first_name} ${profile.last_name}`
+                        : profile?.full_name || user?.email?.split('@')[0]}
                       {profile?.role === 'admin' && (
                         <span className="ml-1 px-2 py-0.5 text-xs bg-primary/20 text-primary rounded-full">
                           Admin
@@ -152,10 +174,20 @@ export function Navbar() {
             ))}
             {isAuthenticated() ? (
               <>
+                {profile?.role === 'admin' && (
+                  <Link to="/admin" onClick={() => setIsOpen(false)}>
+                    <Button variant="outline" className="w-full mt-2 justify-start">
+                      <Settings className="w-4 h-4 mr-2" />
+                      Admin Panel
+                    </Button>
+                  </Link>
+                )}
                 <Link to="/profile" onClick={() => setIsOpen(false)}>
                   <Button variant="ghost" className="w-full mt-2 justify-start">
                     <User className="w-4 h-4 mr-2" />
-                    {profile?.full_name || user?.email?.split('@')[0]}
+                    {profile?.first_name && profile?.last_name
+                      ? `${profile.first_name} ${profile.last_name}`
+                      : profile?.full_name || user?.email?.split('@')[0]}
                     {profile?.role === 'admin' && (
                       <span className="ml-2 px-2 py-0.5 text-xs bg-primary/20 text-primary rounded-full">
                         Admin
