@@ -732,7 +732,7 @@ export default function NFCRedirect() {
               <Heart className={`w-6 h-6 ${theme.accent}`} />
             </div>
           </div>
-          <p className="text-white/20 text-xs tracking-wider">Powered by <span className="font-semibold">NFCLink</span></p>
+          <p className="text-white/20 text-xs tracking-wider">Powered by <span className="font-semibold">Esdodesign</span></p>
         </footer>
       </main>
 

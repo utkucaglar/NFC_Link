@@ -237,7 +237,7 @@ export default function Index() {
           >
             <span className="text-primary font-medium mb-4 block">Özellikler</span>
             <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              Neden <span className="text-gradient">NFCLink</span>?
+              Neden <span className="text-gradient">Esdodesign</span>?
             </h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
               Modern dünyada bağlantı kurmak artık çok daha kolay. 
@@ -462,7 +462,7 @@ export default function Index() {
               Dijital Geleceğinize Adım Atın
             </h2>
             <p className="text-primary-foreground/80 max-w-2xl mx-auto mb-8">
-              Binlerce profesyonel ve işletme zaten NFCLink kullanıyor. 
+              Binlerce profesyonel ve işletme zaten Esdodesign kullanıyor. 
               Siz de hemen başlayın, ilk ay ücretsiz!
             </p>
             <Link to="/products">

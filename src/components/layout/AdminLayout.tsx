@@ -125,7 +125,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
             </div>
             {sidebarOpen && (
               <div>
-                <span className="font-bold text-gradient">NFCLink</span>
+                <span className="font-bold text-gradient">Esdodesign</span>
                 <p className="text-xs text-muted-foreground">Admin Panel</p>
               </div>
             )}

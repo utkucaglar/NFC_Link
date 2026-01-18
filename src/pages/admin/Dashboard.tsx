@@ -157,7 +157,7 @@ export default function AdminDashboard() {
             <span className="text-gradient">Dashboard</span>
           </h1>
           <p className="text-muted-foreground">
-            NFCLink yönetim paneline hoş geldiniz
+            Esdodesign yönetim paneline hoş geldiniz
           </p>
         </motion.div>
 

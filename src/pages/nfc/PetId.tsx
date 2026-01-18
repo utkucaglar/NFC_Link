@@ -303,7 +303,7 @@ export default function NFCPetId() {
           {/* Footer */}
           <div className="px-6 pb-6 text-center">
             <a href="/" className="text-xs text-muted-foreground hover:text-primary transition-colors">
-              Powered by <span className="text-gradient font-semibold">NFCLink</span>
+              Powered by <span className="text-gradient font-semibold">Esdodesign</span>
             </a>
           </div>
         </div>

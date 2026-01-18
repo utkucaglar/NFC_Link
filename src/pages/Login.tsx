@@ -175,7 +175,7 @@ export default function Login() {
             <div className="w-10 h-10 bg-gradient-to-br from-primary to-accent rounded-xl flex items-center justify-center">
               <span className="text-2xl font-bold text-primary-foreground">N</span>
             </div>
-            <span className="text-2xl font-bold text-gradient">NFCLink</span>
+            <span className="text-2xl font-bold text-gradient">Esdodesign</span>
           </Link>
 
           <div className="bg-card rounded-3xl p-8 shadow-2xl border border-border/50 text-center">
@@ -260,7 +260,7 @@ export default function Login() {
           <div className="w-10 h-10 bg-gradient-to-br from-primary to-accent rounded-xl flex items-center justify-center">
             <span className="text-2xl font-bold text-primary-foreground">N</span>
           </div>
-          <span className="text-2xl font-bold text-gradient">NFCLink</span>
+          <span className="text-2xl font-bold text-gradient">Esdodesign</span>
         </Link>
 
         {/* Form Card */}

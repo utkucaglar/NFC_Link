@@ -12,7 +12,7 @@ export function Footer() {
               <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center">
                 <Wifi className="w-5 h-5 text-primary-foreground" />
               </div>
-              <span className="text-xl font-bold text-gradient">NFCLink</span>
+              <span className="text-xl font-bold text-gradient">Esdodesign</span>
             </Link>
             <p className="text-muted-foreground text-sm max-w-md">
               NFC teknolojisi ile dijital varlığınızı tek dokunuşla paylaşın. 
@@ -92,7 +92,7 @@ export function Footer() {
 
         <div className="border-t border-border mt-12 pt-8 text-center">
           <p className="text-sm text-muted-foreground">
-            © 2024 NFCLink. Tüm hakları saklıdır.
+            © 2024 Esdodesign. Tüm hakları saklıdır.
           </p>
         </div>
       </div>
