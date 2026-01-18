@@ -13,6 +13,7 @@ import {
   X,
   Wifi,
   Home,
+  CreditCard,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ const menuItems = [
   { name: "Dashboard", path: "/admin", icon: LayoutDashboard },
   { name: "Siparişler", path: "/admin/orders", icon: ShoppingCart },
   { name: "Ürünler", path: "/admin/products", icon: Package },
+  { name: "Abonelikler", path: "/admin/subscriptions", icon: CreditCard },
   { name: "İndirimler", path: "/admin/discounts", icon: Tag },
 ];
 

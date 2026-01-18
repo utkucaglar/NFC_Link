@@ -14,6 +14,10 @@ import {
   Save,
   Edit,
   Check,
+  Link2,
+  ExternalLink,
+  Copy,
+  Wifi,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -61,6 +65,19 @@ interface Order {
   order_items?: OrderItem[];
 }
 
+interface NFCRecord {
+  id: string;
+  unique_key: string;
+  name: string;
+  type: string;
+  is_active: boolean;
+  scan_count: number;
+  data: Record<string, any>;
+  theme: string;
+  created_at: string;
+  user_id: string;
+}
+
 const statusIcons: Record<OrderStatus, React.ElementType> = {
   pending: Clock,
   confirmed: CheckCircle2,
@@ -83,10 +100,109 @@ export default function AdminOrders() {
   const [noteText, setNoteText] = useState("");
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [trackingInput, setTrackingInput] = useState("");
+  
+  // NFC state
+  const [nfcRecords, setNfcRecords] = useState<Map<string, NFCRecord[]>>(new Map());
+  const [editingNfc, setEditingNfc] = useState<string | null>(null);
+  const [nfcEditData, setNfcEditData] = useState<Record<string, any>>({});
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   useEffect(() => {
     fetchOrders();
   }, []);
+
+  // Expanded order değiştiğinde NFC kayıtlarını çek
+  useEffect(() => {
+    if (expandedOrder) {
+      const order = orders.find(o => o.id === expandedOrder);
+      if (order) {
+        fetchNfcRecords(order.user_id);
+      }
+    }
+  }, [expandedOrder, orders]);
+
+  const fetchNfcRecords = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("nfcs")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      setNfcRecords(prev => new Map(prev).set(userId, data || []));
+    } catch (error) {
+      console.error("NFC kayıtları çekilemedi:", error);
+    }
+  };
+
+  const copyNfcLink = (uniqueKey: string, type: string) => {
+    const baseUrl = window.location.origin;
+    const path = type === "business-card" ? "business" : type === "pet-id" ? "pet" : "redirect";
+    const url = `${baseUrl}/nfc/${path}/${uniqueKey}`;
+    navigator.clipboard.writeText(url);
+    setCopiedKey(uniqueKey);
+    toast.success("Link kopyalandı");
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  const updateNfcData = async (nfcId: string, newData: Record<string, any>) => {
+    try {
+      const { error } = await supabase
+        .from("nfcs")
+        .update({ data: newData, updated_at: new Date().toISOString() })
+        .eq("id", nfcId);
+
+      if (error) throw error;
+
+      // Update local state
+      setNfcRecords(prev => {
+        const newMap = new Map(prev);
+        for (const [userId, records] of newMap) {
+          const updated = records.map(r => 
+            r.id === nfcId ? { ...r, data: newData } : r
+          );
+          newMap.set(userId, updated);
+        }
+        return newMap;
+      });
+
+      toast.success("NFC verisi güncellendi");
+      setEditingNfc(null);
+    } catch (error) {
+      console.error("NFC güncelleme hatası:", error);
+      toast.error("NFC verisi güncellenemedi");
+    }
+  };
+
+  const toggleNfcActive = async (nfcId: string, isActive: boolean) => {
+    try {
+      const { error } = await supabase
+        .from("nfcs")
+        .update({ is_active: !isActive, updated_at: new Date().toISOString() })
+        .eq("id", nfcId);
+
+      if (error) throw error;
+
+      // Update local state
+      setNfcRecords(prev => {
+        const newMap = new Map(prev);
+        for (const [userId, records] of newMap) {
+          const updated = records.map(r => 
+            r.id === nfcId ? { ...r, is_active: !isActive } : r
+          );
+          newMap.set(userId, updated);
+        }
+        return newMap;
+      });
+
+      toast.success(isActive ? "NFC devre dışı bırakıldı" : "NFC aktif edildi");
+    } catch (error) {
+      console.error("NFC durum güncelleme hatası:", error);
+      toast.error("NFC durumu güncellenemedi");
+    }
+  };
 
   const fetchOrders = async () => {
     try {
@@ -463,6 +579,164 @@ export default function AdminOrders() {
                               ))}
                             </div>
                           </div>
+
+                          {/* NFC Links Section */}
+                          {(() => {
+                            const userNfcs = nfcRecords.get(order.user_id) || [];
+                            if (userNfcs.length === 0) return null;
+                            
+                            return (
+                              <div>
+                                <h4 className="font-medium mb-3 flex items-center gap-2">
+                                  <Wifi className="w-4 h-4 text-primary" />
+                                  NFC Linkleri ({userNfcs.length})
+                                </h4>
+                                <div className="space-y-3">
+                                  {userNfcs.map((nfc) => (
+                                    <div
+                                      key={nfc.id}
+                                      className={cn(
+                                        "bg-muted/30 rounded-xl p-4 border",
+                                        nfc.is_active ? "border-accent/30" : "border-destructive/30"
+                                      )}
+                                    >
+                                      <div className="flex items-start justify-between gap-4 mb-3">
+                                        <div className="flex items-center gap-3">
+                                          <div className={cn(
+                                            "w-10 h-10 rounded-xl flex items-center justify-center",
+                                            nfc.is_active ? "bg-accent/10" : "bg-destructive/10"
+                                          )}>
+                                            <Wifi className={cn(
+                                              "w-5 h-5",
+                                              nfc.is_active ? "text-accent" : "text-destructive"
+                                            )} />
+                                          </div>
+                                          <div>
+                                            <p className="font-medium">{nfc.name}</p>
+                                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                              <span className="capitalize">{nfc.type.replace("-", " ")}</span>
+                                              <span>•</span>
+                                              <span>{nfc.scan_count} tarama</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <Badge className={nfc.is_active ? "bg-accent/10 text-accent" : "bg-destructive/10 text-destructive"}>
+                                            {nfc.is_active ? "Aktif" : "Pasif"}
+                                          </Badge>
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            onClick={() => toggleNfcActive(nfc.id, nfc.is_active)}
+                                          >
+                                            {nfc.is_active ? "Devre Dışı" : "Aktif Et"}
+                                          </Button>
+                                        </div>
+                                      </div>
+
+                                      {/* NFC Link */}
+                                      <div className="flex items-center gap-2 bg-background rounded-lg px-3 py-2 mb-3">
+                                        <Link2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                                        <code className="text-sm flex-1 truncate">
+                                          {window.location.origin}/nfc/{nfc.type === "business-card" ? "business" : nfc.type === "pet-id" ? "pet" : "redirect"}/{nfc.unique_key}
+                                        </code>
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          className="h-7 px-2"
+                                          onClick={() => copyNfcLink(nfc.unique_key, nfc.type)}
+                                        >
+                                          {copiedKey === nfc.unique_key ? (
+                                            <Check className="w-4 h-4 text-accent" />
+                                          ) : (
+                                            <Copy className="w-4 h-4" />
+                                          )}
+                                        </Button>
+                                        <a
+                                          href={`/nfc/${nfc.type === "business-card" ? "business" : nfc.type === "pet-id" ? "pet" : "redirect"}/${nfc.unique_key}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          <Button size="sm" variant="ghost" className="h-7 px-2">
+                                            <ExternalLink className="w-4 h-4" />
+                                          </Button>
+                                        </a>
+                                      </div>
+
+                                      {/* NFC Data */}
+                                      {editingNfc === nfc.id ? (
+                                        <div className="space-y-3">
+                                          <div className="grid grid-cols-2 gap-3">
+                                            {Object.entries(nfcEditData).map(([key, value]) => (
+                                              key !== "type" && (
+                                                <div key={key} className="space-y-1">
+                                                  <label className="text-xs text-muted-foreground capitalize">{key}</label>
+                                                  {typeof value === "string" && value.length > 100 ? (
+                                                    <textarea
+                                                      value={value as string}
+                                                      onChange={(e) => setNfcEditData(prev => ({ ...prev, [key]: e.target.value }))}
+                                                      className="w-full p-2 text-sm bg-background border border-border rounded-lg resize-none"
+                                                      rows={3}
+                                                    />
+                                                  ) : (
+                                                    <Input
+                                                      value={value as string || ""}
+                                                      onChange={(e) => setNfcEditData(prev => ({ ...prev, [key]: e.target.value }))}
+                                                      className="h-8 text-sm"
+                                                    />
+                                                  )}
+                                                </div>
+                                              )
+                                            ))}
+                                          </div>
+                                          <div className="flex gap-2">
+                                            <Button
+                                              size="sm"
+                                              onClick={() => updateNfcData(nfc.id, nfcEditData)}
+                                            >
+                                              <Save className="w-4 h-4 mr-1" />
+                                              Kaydet
+                                            </Button>
+                                            <Button
+                                              size="sm"
+                                              variant="outline"
+                                              onClick={() => setEditingNfc(null)}
+                                            >
+                                              İptal
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-start justify-between">
+                                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm flex-1">
+                                            {Object.entries(nfc.data || {}).slice(0, 6).map(([key, value]) => (
+                                              key !== "type" && (
+                                                <p key={key}>
+                                                  <span className="text-muted-foreground capitalize">{key}:</span>{" "}
+                                                  <span className="truncate">{String(value).substring(0, 30)}{String(value).length > 30 ? "..." : ""}</span>
+                                                </p>
+                                              )
+                                            ))}
+                                          </div>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => {
+                                              setEditingNfc(nfc.id);
+                                              setNfcEditData(nfc.data || {});
+                                            }}
+                                          >
+                                            <Edit className="w-4 h-4 mr-1" />
+                                            Düzenle
+                                          </Button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
 
                           {/* Status Update */}
                           <div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2 } from "lucide-react";
+import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2, ChevronRight, X } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
@@ -13,6 +13,19 @@ import {
   DEFAULT_SPECS, 
   DEFAULT_COLORS 
 } from "@/lib/helpers";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { BusinessCardForm, BusinessCardData, defaultBusinessCardData } from "@/components/forms/BusinessCardForm";
+import { PetIdForm, PetIdData, defaultPetIdData } from "@/components/forms/PetIdForm";
+import { RedirectForm, RedirectData, defaultRedirectData } from "@/components/forms/RedirectForm";
+
+type NFCType = "business-card" | "pet-id" | "redirect" | null;
 
 interface Product {
   id: number;
@@ -28,7 +41,17 @@ interface Product {
   specs: Record<string, string> | null;
   monthly_subscription_fee: number;
   is_active: boolean;
+  nfc_type: NFCType;
 }
+
+// Kategori bazlı NFC tipi belirleme (veritabanında nfc_type yoksa)
+const getNfcTypeFromCategory = (category: string): NFCType => {
+  const cat = category?.toLowerCase() || "";
+  if (cat.includes("profesyonel") || cat.includes("premium")) return "business-card";
+  if (cat.includes("evcil") || cat.includes("pet")) return "pet-id";
+  if (cat.includes("spor") || cat.includes("etkinlik")) return "redirect";
+  return null;
+};
 
 export default function ProductDetail() {
   const { id } = useParams();
@@ -40,6 +63,13 @@ export default function ProductDetail() {
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Customization form state
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [businessCardData, setBusinessCardData] = useState<BusinessCardData>(defaultBusinessCardData);
+  const [petIdData, setPetIdData] = useState<PetIdData>(defaultPetIdData);
+  const [redirectData, setRedirectData] = useState<RedirectData>(defaultRedirectData);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -137,17 +167,92 @@ export default function ProductDetail() {
   
   const productImage = getProductImage(product.image_url, product.category);
   const longDescription = product.long_description || product.description || "Profesyonel NFC çözümü ile dijital varlığınızı paylaşın.";
+  
+  // NFC tipi belirleme
+  const nfcType = product.nfc_type || getNfcTypeFromCategory(product.category);
+  const requiresCustomization = nfcType === "business-card" || nfcType === "pet-id" || nfcType === "redirect";
 
-  const handleAddToCart = () => {
+  // Form doğrulama
+  const validateBusinessCardForm = (): boolean => {
+    const errors: Record<string, string> = {};
+    if (!businessCardData.name.trim()) errors.name = "İsim soyisim gereklidir";
+    if (!businessCardData.title.trim()) errors.title = "Meslek ünvanı gereklidir";
+    if (!businessCardData.phone.trim()) errors.phone = "Telefon numarası gereklidir";
+    if (!businessCardData.email.trim()) errors.email = "E-posta gereklidir";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(businessCardData.email)) {
+      errors.email = "Geçerli bir e-posta adresi girin";
+    }
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const validatePetIdForm = (): boolean => {
+    const errors: Record<string, string> = {};
+    if (!petIdData.petName.trim()) errors.petName = "Evcil hayvan adı gereklidir";
+    if (!petIdData.ownerName.trim()) errors.ownerName = "Sahibi adı gereklidir";
+    if (!petIdData.ownerPhone.trim()) errors.ownerPhone = "Sahibi telefonu gereklidir";
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const validateRedirectForm = (): boolean => {
+    const errors: Record<string, string> = {};
+    if (!redirectData.partnerName1.trim()) errors.partnerName1 = "1. kişi adı gereklidir";
+    if (!redirectData.partnerName2.trim()) errors.partnerName2 = "2. kişi adı gereklidir";
+    if (!redirectData.relationshipStartDate) errors.relationshipStartDate = "İlişki başlangıç tarihi gereklidir";
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Sepete ekleme işleyicisi
+  const handleAddToCartClick = () => {
+    if (requiresCustomization) {
+      setIsFormOpen(true);
+    } else {
+      addProductToCart(null);
+    }
+  };
+
+  const handleFormSubmit = () => {
+    let isValid = false;
+    let customizationData: any = null;
+
+    if (nfcType === "business-card") {
+      isValid = validateBusinessCardForm();
+      if (isValid) customizationData = { type: "business-card", ...businessCardData };
+    } else if (nfcType === "pet-id") {
+      isValid = validatePetIdForm();
+      if (isValid) customizationData = { type: "pet-id", ...petIdData };
+    } else if (nfcType === "redirect") {
+      isValid = validateRedirectForm();
+      if (isValid) customizationData = { type: "redirect", ...redirectData };
+    }
+
+    if (isValid && customizationData) {
+      addProductToCart(customizationData);
+      setIsFormOpen(false);
+      // Formu sıfırla
+      setBusinessCardData(defaultBusinessCardData);
+      setPetIdData(defaultPetIdData);
+      setRedirectData(defaultRedirectData);
+      setFormErrors({});
+    }
+  };
+
+  const addProductToCart = (customization: any) => {
+    const totalPrice = product.price + (product.monthly_subscription_fee || 29);
     for (let i = 0; i < quantity; i++) {
       addToCart({
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: product.price,
+        price: totalPrice, // Ürün + ilk ay abonelik
         image: productImage,
         customization: {
-          renk: colors[selectedColor]
+          renk: colors[selectedColor],
+          nfcType: nfcType,
+          subscriptionFee: product.monthly_subscription_fee || 29,
+          ...customization
         }
       });
     }
@@ -198,9 +303,18 @@ export default function ProductDetail() {
               </p>
 
               {/* Price */}
-              <div className="flex items-baseline gap-3 mb-6">
-                <span className="text-4xl font-bold text-gradient">₺{product.price}</span>
-                <span className="text-muted-foreground">+ ₺{product.monthly_subscription_fee || 29}/ay abonelik</span>
+              <div className="mb-6">
+                <div className="flex items-baseline gap-3">
+                  <span className="text-4xl font-bold text-gradient">
+                    ₺{(product.price + (product.monthly_subscription_fee || 29)).toFixed(0)}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik dahil)
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Sonraki aylar: ₺{product.monthly_subscription_fee || 29}/ay
+                </p>
               </div>
 
               {/* Color Selection */}
@@ -249,10 +363,16 @@ export default function ProductDetail() {
               </div>
 
               {/* Add to Cart */}
-              <Button size="lg" className="w-full mb-6" onClick={handleAddToCart}>
+              <Button size="lg" className="w-full mb-6" onClick={handleAddToCartClick}>
                 <ShoppingCart className="w-5 h-5 mr-2" />
-                Sepete Ekle - ₺{product.price * quantity}
+                {requiresCustomization ? "Bilgileri Gir ve Sepete Ekle" : "Sepete Ekle"} - ₺{((product.price + (product.monthly_subscription_fee || 29)) * quantity).toFixed(0)}
               </Button>
+              
+              {requiresCustomization && (
+                <p className="text-sm text-muted-foreground text-center -mt-4 mb-4">
+                  * Bu ürün için NFC kartınızda görünecek bilgileri girmeniz gerekmektedir
+                </p>
+              )}
 
               {/* Benefits */}
               <div className="grid grid-cols-3 gap-4 pt-6 border-t">
@@ -347,6 +467,59 @@ export default function ProductDetail() {
           )}
         </div>
       </section>
+
+      {/* NFC Customization Form Dialog */}
+      <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShoppingCart className="w-5 h-5 text-primary" />
+              {nfcType === "business-card" && "Dijital Kartvizit Bilgileri"}
+              {nfcType === "pet-id" && "Evcil Hayvan Kimliği Bilgileri"}
+              {nfcType === "redirect" && "Sevgililer Sayfası Bilgileri"}
+            </DialogTitle>
+            <DialogDescription>
+              {nfcType === "redirect" 
+                ? "Sevgilinizle özel sayfanızda görünecek bilgileri doldurun."
+                : "NFC kartınızda görünecek bilgileri doldurun. Bu bilgiler siparişiniz onaylandıktan sonra NFC sayfanızda görünecektir."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {nfcType === "business-card" && (
+              <BusinessCardForm
+                data={businessCardData}
+                onChange={setBusinessCardData}
+                errors={formErrors}
+              />
+            )}
+            {nfcType === "pet-id" && (
+              <PetIdForm
+                data={petIdData}
+                onChange={setPetIdData}
+                errors={formErrors}
+              />
+            )}
+            {nfcType === "redirect" && (
+              <RedirectForm
+                data={redirectData}
+                onChange={setRedirectData}
+                errors={formErrors}
+              />
+            )}
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setIsFormOpen(false)}>
+              İptal
+            </Button>
+            <Button variant="hero" onClick={handleFormSubmit}>
+              <ShoppingCart className="w-4 h-4 mr-2" />
+              Sepete Ekle - ₺{((product.price + (product.monthly_subscription_fee || 29)) * quantity).toFixed(0)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

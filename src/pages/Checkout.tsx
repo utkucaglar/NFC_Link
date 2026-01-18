@@ -49,6 +49,16 @@ interface ShippingFormData {
   notes: string;
 }
 
+// Benzersiz NFC anahtarı oluştur
+const generateUniqueKey = (): string => {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let key = '';
+  for (let i = 0; i < 8; i++) {
+    key += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return key;
+};
+
 export default function Checkout() {
   const navigate = useNavigate();
   const { cartItems, cartTotal, clearCart } = useCart();
@@ -178,11 +188,97 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         customization_confirmed: false,
       }));
 
-      const { error: itemsError } = await supabase
+      const { data: insertedItems, error: itemsError } = await supabase
         .from("order_items")
-        .insert(orderItems);
+        .insert(orderItems)
+        .select();
 
       if (itemsError) throw itemsError;
+
+      // NFC kayıtları oluştur (customization verisi olan ürünler için)
+      const nfcRecords = [];
+      for (let i = 0; i < cartItems.length; i++) {
+        const item = cartItems[i];
+        const customization = item.customization;
+        
+        if (customization && customization.nfcType) {
+          // Her ürün için miktar kadar NFC kaydı oluştur
+          for (let q = 0; q < item.quantity; q++) {
+            // Benzersiz anahtar oluştur
+            const uniqueKey = generateUniqueKey();
+            
+            // NFC verisi hazırla
+            const nfcData = {
+              type: customization.type,
+              ...(customization.type === "business-card" ? {
+                name: customization.name,
+                title: customization.title,
+                company: customization.company,
+                phone: customization.phone,
+                email: customization.email,
+                bio: customization.bio,
+                linkedin: customization.linkedin,
+                instagram: customization.instagram,
+                website: customization.website,
+                theme: customization.theme,
+              } : {}),
+              ...(customization.type === "pet-id" ? {
+                petName: customization.petName,
+                petImage: customization.petImage,
+                petMessage: customization.petMessage,
+                ownerName: customization.ownerName,
+                ownerPhone: customization.ownerPhone,
+                address: customization.address,
+                healthNotes: customization.healthNotes,
+                microchipNumber: customization.microchipNumber,
+                theme: customization.theme,
+              } : {}),
+              ...(customization.type === "redirect" ? {
+                partnerName1: customization.partnerName1,
+                partnerName2: customization.partnerName2,
+                relationshipStartDate: customization.relationshipStartDate,
+                backgroundImage: customization.backgroundImage,
+                subtitle: customization.subtitle,
+                theme: customization.theme,
+              } : {}),
+            };
+
+            // NFC adını türe göre belirle
+            let nfcName = "";
+            if (customization.type === "business-card") {
+              nfcName = `Kartvizit - ${customization.name}`;
+            } else if (customization.type === "pet-id") {
+              nfcName = `Pet ID - ${customization.petName}`;
+            } else if (customization.type === "redirect") {
+              nfcName = `Sevgililer - ${customization.partnerName1} & ${customization.partnerName2}`;
+            }
+
+            nfcRecords.push({
+              user_id: user?.id,
+              name: nfcName,
+              unique_key: uniqueKey,
+              type: customization.nfcType,
+              is_active: true,
+              data: nfcData,
+              theme: customization.theme || "default",
+              subscription_status: "active",
+              subscription_end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 gün sonra
+            });
+          }
+        }
+      }
+
+      // NFC kayıtlarını veritabanına ekle
+      if (nfcRecords.length > 0) {
+        const { error: nfcError } = await supabase
+          .from("nfcs")
+          .insert(nfcRecords);
+
+        if (nfcError) {
+          console.error("NFC kayıt hatası:", nfcError);
+          // NFC kaydı başarısız olsa bile siparişi tamamla
+        }
+      }
       
       toast.success(`Siparişiniz alındı! Sipariş No: ${orderNumber}`);
       clearCart();

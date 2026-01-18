@@ -1,13 +1,16 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Search, ShoppingCart, Loader2 } from "lucide-react";
+import { Search, ShoppingCart, Loader2, ArrowRight } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
 import { toast } from "sonner";
 import { getProductImage } from "@/lib/helpers";
+
+// Kişiselleştirme gerektiren kategoriler
+const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik"];
 
 const categories = ["Tümü", "Profesyonel", "Spor & Etkinlik", "Evcil Hayvan"];
 
@@ -18,15 +21,46 @@ interface Product {
   price: number;
   category: string;
   image_url: string | null;
+  monthly_subscription_fee: number;
 }
 
 export default function Products() {
+  const navigate = useNavigate();
   const [selectedCategory, setSelectedCategory] = useState("Tümü");
   const [searchQuery, setSearchQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { addToCart } = useCart();
+
+  // Ürünün kişiselleştirme gerektirip gerektirmediğini kontrol et
+  const requiresCustomization = (category: string): boolean => {
+    return CUSTOMIZATION_CATEGORIES.some(c => 
+      category.toLowerCase().includes(c.toLowerCase())
+    );
+  };
+
+  // Sepete ekle veya detay sayfasına yönlendir
+  const handleAddToCart = (product: Product) => {
+    if (requiresCustomization(product.category)) {
+      // Kişiselleştirme gerektiren ürünler için detay sayfasına yönlendir
+      navigate(`/product/${product.id}`);
+      toast.info("Bu ürün için bilgilerinizi girmeniz gerekiyor");
+    } else {
+      // Diğer ürünler için doğrudan sepete ekle
+      const totalPrice = product.price + (product.monthly_subscription_fee || 29);
+      addToCart({
+        id: product.id,
+        productId: product.id,
+        name: product.name,
+        price: totalPrice, // Ürün + ilk ay abonelik
+        image: getProductImage(product.image_url, product.category),
+        customization: {
+          subscriptionFee: product.monthly_subscription_fee || 29
+        }
+      });
+    }
+  };
 
   // Fetch products from Supabase - Native fetch API kullanarak (Chrome uyumluluğu için)
   useEffect(() => {
@@ -49,7 +83,7 @@ export default function Products() {
         
         // Native fetch API kullan - Supabase client yerine
         const response = await fetch(
-          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url&is_active=eq.true&order=id.asc`,
+          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url,monthly_subscription_fee&is_active=eq.true&order=id.asc`,
           {
             method: 'GET',
             headers: {
@@ -239,21 +273,28 @@ export default function Products() {
                   <p className="text-sm text-muted-foreground mb-4">{product.description}</p>
                   <div className="flex items-center justify-between">
                     <div>
-                      <span className="text-2xl font-bold text-gradient">₺{product.price}</span>
-                      <span className="text-xs text-muted-foreground ml-2">+ ₺29/ay</span>
+                      <span className="text-2xl font-bold text-gradient">
+                        ₺{(product.price + (product.monthly_subscription_fee || 29)).toFixed(0)}
+                      </span>
+                      <p className="text-xs text-muted-foreground">
+                        ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik)
+                      </p>
                     </div>
                     <Button 
                       size="sm"
-                      onClick={() => addToCart({
-                        id: product.id,
-                        productId: product.id,
-                        name: product.name,
-                        price: product.price,
-                        image: getProductImage(product.image_url, product.category)
-                      })}
+                      onClick={() => handleAddToCart(product)}
                     >
-                      <ShoppingCart className="w-4 h-4 mr-1" />
-                      Sepete Ekle
+                      {requiresCustomization(product.category) ? (
+                        <>
+                          <ArrowRight className="w-4 h-4 mr-1" />
+                          Bilgileri Gir
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingCart className="w-4 h-4 mr-1" />
+                          Sepete Ekle
+                        </>
+                      )}
                     </Button>
                   </div>
                 </div>

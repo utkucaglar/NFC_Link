@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Trash2, Plus, Minus, ShoppingBag, ArrowRight } from "lucide-react";
+import { Trash2, Plus, Minus, ShoppingBag, ArrowRight, AlertCircle } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -8,17 +8,31 @@ import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
 import { toast } from "sonner";
 
+// Kişiselleştirme gerektiren NFC tipleri
+const CUSTOMIZATION_NFC_TYPES = ["business-card", "pet-id"];
+
 export default function Cart() {
   const { cartItems, updateQuantity, removeFromCart, cartTotal } = useCart();
   const [couponCode, setCouponCode] = useState("");
   const navigate = useNavigate();
 
-  const handleQuantityChange = (id: number, change: number) => {
-    const item = cartItems.find((i) => i.id === id);
-    if (item) {
-      const newQuantity = Math.max(1, item.quantity + change);
-      updateQuantity(id, newQuantity);
+  // Ürünün kişiselleştirme gerektirip gerektirmediğini kontrol et
+  const requiresCustomization = (item: typeof cartItems[0]): boolean => {
+    const nfcType = item.customization?.nfcType || item.customization?.type;
+    return CUSTOMIZATION_NFC_TYPES.includes(nfcType);
+  };
+
+  const handleQuantityChange = (id: number, change: number, item: typeof cartItems[0]) => {
+    // Artırma işlemi ve kişiselleştirme gerektiren ürün
+    if (change > 0 && requiresCustomization(item)) {
+      // Ürün detay sayfasına yönlendir
+      toast.info("Her NFC için ayrı bilgi girmeniz gerekiyor");
+      navigate(`/product/${item.productId || item.id}`);
+      return;
     }
+
+    const newQuantity = Math.max(1, item.quantity + change);
+    updateQuantity(id, newQuantity);
   };
 
   const handleRemoveItem = (id: number) => {
@@ -42,7 +56,11 @@ export default function Cart() {
     navigate("/checkout");
   };
 
-  const monthlyFee = cartItems.reduce((sum, item) => sum + 29 * item.quantity, 0);
+  // Aylık abonelik ücreti hesaplama (ilk ay dahil değil, sonraki aylar için)
+  const monthlyFee = cartItems.reduce((sum, item) => {
+    const subscriptionFee = item.customization?.subscriptionFee || 29;
+    return sum + subscriptionFee * item.quantity;
+  }, 0);
   const subtotal = cartTotal;
   const total = subtotal;
 
@@ -91,12 +109,31 @@ export default function Cart() {
                           <h3 className="font-semibold mb-1 hover:text-primary transition-colors cursor-pointer">{item.name}</h3>
                         </Link>
                         {item.customization && (
-                          <p className="text-sm text-muted-foreground mb-2">
-                            Özelleştirme: {item.customization.text}, {item.customization.color}
-                          </p>
+                          <div className="text-sm text-muted-foreground mb-2">
+                            {item.customization.renk && (
+                              <span>Renk: {item.customization.renk}</span>
+                            )}
+                            {item.customization.nfcType === "business-card" && item.customization.name && (
+                              <span className="block">Kartvizit: {item.customization.name}</span>
+                            )}
+                            {item.customization.nfcType === "pet-id" && item.customization.petName && (
+                              <span className="block">Pet: {item.customization.petName}</span>
+                            )}
+                            {item.customization.type === "business-card" && item.customization.name && (
+                              <span className="block">Kartvizit: {item.customization.name}</span>
+                            )}
+                            {item.customization.type === "pet-id" && item.customization.petName && (
+                              <span className="block">Pet: {item.customization.petName}</span>
+                            )}
+                          </div>
                         )}
                         <p className="text-lg font-bold text-gradient">₺{item.price}</p>
-                        <p className="text-xs text-muted-foreground">+ ₺29/ay abonelik</p>
+                        {requiresCustomization(item) && (
+                          <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
+                            <AlertCircle className="w-3 h-3" />
+                            Her NFC için ayrı bilgi gerekli
+                          </p>
+                        )}
                       </div>
 
                       {/* Actions */}
@@ -106,19 +143,32 @@ export default function Cart() {
                             variant="outline"
                             size="icon"
                             className="h-8 w-8"
-                            onClick={() => handleQuantityChange(item.id, -1)}
+                            onClick={() => handleQuantityChange(item.id, -1, item)}
+                            disabled={item.quantity <= 1}
                           >
                             <Minus className="w-4 h-4" />
                           </Button>
                           <span className="w-8 text-center font-medium">{item.quantity}</span>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => handleQuantityChange(item.id, 1)}
-                          >
-                            <Plus className="w-4 h-4" />
-                          </Button>
+                          {requiresCustomization(item) ? (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleQuantityChange(item.id, 1, item)}
+                              title="Yeni NFC eklemek için bilgi girmeniz gerekiyor"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleQuantityChange(item.id, 1, item)}
+                            >
+                              <Plus className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                         <Button
                           variant="ghost"
@@ -146,19 +196,11 @@ export default function Cart() {
 
                   <div className="space-y-3 mb-6">
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Ara Toplam</span>
+                      <span className="text-muted-foreground">Ürünler + İlk Ay Abonelik</span>
                       <span>₺{subtotal}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Aylık Abonelik</span>
-                      <span>₺{monthlyFee}/ay</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Kargo</span>
-                      <span className="text-accent">Ücretsiz</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">İlk Ay</span>
                       <span className="text-accent">Ücretsiz</span>
                     </div>
                   </div>

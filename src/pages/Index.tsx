@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, Wifi, CreditCard, PawPrint, Link2, Zap, Shield, Smartphone, ChevronRight } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,10 @@ import { useCart } from "@/contexts/CartContext";
 import ProductSwiper from "@/components/ProductSwiper";
 import { supabase } from "@/lib/supabase";
 import { getProductImage, formatPrice } from "@/lib/helpers";
+import { toast } from "sonner";
+
+// Kişiselleştirme gerektiren kategoriler
+const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik"];
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -75,12 +79,41 @@ interface Product {
   price: number;
   category: string;
   image_url: string | null;
+  monthly_subscription_fee: number;
 }
 
 export default function Index() {
+  const navigate = useNavigate();
   const { addToCart } = useCart();
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
+
+  // Ürünün kişiselleştirme gerektirip gerektirmediğini kontrol et
+  const requiresCustomization = (category: string): boolean => {
+    return CUSTOMIZATION_CATEGORIES.some(c => 
+      category.toLowerCase().includes(c.toLowerCase())
+    );
+  };
+
+  // Sepete ekle veya detay sayfasına yönlendir
+  const handleAddToCart = (product: Product) => {
+    if (requiresCustomization(product.category)) {
+      navigate(`/product/${product.id}`);
+      toast.info("Bu ürün için bilgilerinizi girmeniz gerekiyor");
+    } else {
+      const totalPrice = product.price + (product.monthly_subscription_fee || 29);
+      addToCart({
+        id: product.id,
+        productId: product.id,
+        name: product.name,
+        price: totalPrice, // Ürün + ilk ay abonelik
+        image: getProductImage(product.image_url, product.category),
+        customization: {
+          subscriptionFee: product.monthly_subscription_fee || 29
+        }
+      });
+    }
+  };
 
   // Fetch featured products from database
   useEffect(() => {
@@ -88,7 +121,7 @@ export default function Index() {
       try {
         const { data, error } = await supabase
           .from('products')
-          .select('id, name, price, category, image_url')
+          .select('id, name, price, category, image_url, monthly_subscription_fee')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .limit(3);
@@ -334,15 +367,9 @@ export default function Index() {
                       <span className="text-2xl font-bold text-gradient">₺{product.price}</span>
                       <Button 
                         size="sm"
-                        onClick={() => addToCart({
-                          id: product.id,
-                          productId: product.id,
-                          name: product.name,
-                          price: product.price,
-                          image: getProductImage(product.image_url, product.category)
-                        })}
+                        onClick={() => handleAddToCart(product)}
                       >
-                        Sepete Ekle
+                        {requiresCustomization(product.category) ? "Bilgileri Gir" : "Sepete Ekle"}
                       </Button>
                     </div>
                   </div>

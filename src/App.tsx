@@ -15,6 +15,7 @@ import Checkout from "./pages/Checkout";
 import MyNFC from "./pages/MyNFC";
 import Orders from "./pages/Orders";
 import Profile from "./pages/Profile";
+import RenewSubscription from "./pages/RenewSubscription";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 import NFCBusinessCard from "./pages/nfc/BusinessCard";
@@ -26,6 +27,7 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import AdminOrders from "./pages/admin/Orders";
 import AdminProducts from "./pages/admin/Products";
 import AdminDiscounts from "./pages/admin/Discounts";
+import AdminSubscriptions from "./pages/admin/Subscriptions";
 
 const App = () => (
   <AuthProvider>
@@ -47,11 +49,13 @@ const App = () => (
             <Route path="/my-nfc" element={<MyNFC />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/renew-subscription/:nfcId" element={<RenewSubscription />} />
             {/* Admin Routes */}
             <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
             <Route path="/admin/orders" element={<AdminRoute><AdminOrders /></AdminRoute>} />
             <Route path="/admin/products" element={<AdminRoute><AdminProducts /></AdminRoute>} />
             <Route path="/admin/discounts" element={<AdminRoute><AdminDiscounts /></AdminRoute>} />
+            <Route path="/admin/subscriptions" element={<AdminRoute><AdminSubscriptions /></AdminRoute>} />
             {/* NFC Public Pages */}
             <Route path="/nfc/business/:key" element={<NFCBusinessCard />} />
             <Route path="/nfc/pet/:key" element={<NFCPetId />} />

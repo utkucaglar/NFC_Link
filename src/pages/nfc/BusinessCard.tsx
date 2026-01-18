@@ -1,6 +1,10 @@
+import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Phone, Mail, MessageCircle, Linkedin, Instagram, Globe, MapPin, User } from "lucide-react";
+import { Phone, Mail, MessageCircle, Linkedin, Instagram, Globe, User, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { supabase } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 
 interface BusinessCardData {
   name: string;
@@ -14,10 +18,11 @@ interface BusinessCardData {
   website?: string;
   bio?: string;
   avatar?: string;
+  theme?: string;
 }
 
-// This would come from the database in real implementation
-const sampleData: BusinessCardData = {
+// Demo data
+const demoData: BusinessCardData = {
   name: "Ahmet Yılmaz",
   title: "Senior Software Engineer",
   company: "Tech Startup A.Ş.",
@@ -27,23 +32,175 @@ const sampleData: BusinessCardData = {
   linkedin: "ahmetyilmaz",
   instagram: "ahmet.dev",
   website: "https://ahmetyilmaz.dev",
-  bio: "10+ yıllık yazılım geliştirme deneyimi. React, Node.js ve cloud teknolojileri konusunda uzman."
+  bio: "10+ yıllık yazılım geliştirme deneyimi. React, Node.js ve cloud teknolojileri konusunda uzman.",
+  theme: "default"
+};
+
+// Tema renkleri
+const themeStyles: Record<string, { gradient: string; accent: string }> = {
+  default: { gradient: "from-violet-500 to-purple-600", accent: "bg-violet-500" },
+  modern: { gradient: "from-blue-500 to-cyan-500", accent: "bg-blue-500" },
+  minimal: { gradient: "from-gray-700 to-gray-900", accent: "bg-gray-700" },
+  gradient: { gradient: "from-pink-500 via-purple-500 to-indigo-500", accent: "bg-purple-500" },
 };
 
 export default function NFCBusinessCard() {
-  const data = sampleData;
+  const { key } = useParams();
+  const [data, setData] = useState<BusinessCardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const isDemo = !key || key === "demo";
+
+  useEffect(() => {
+    const fetchNFCData = async () => {
+      // Demo mod
+      if (isDemo) {
+        setData(demoData);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        // NFC verisini veritabanından çek
+        const { data: nfcData, error: nfcError } = await supabase
+          .from("nfcs")
+          .select("*")
+          .eq("unique_key", key)
+          .eq("type", "business-card")
+          .single();
+
+        if (nfcError) {
+          if (nfcError.code === "PGRST116") {
+            setError("Bu NFC kartı bulunamadı");
+          } else {
+            throw nfcError;
+          }
+          setLoading(false);
+          return;
+        }
+
+        if (!nfcData.is_active) {
+          setError("Bu NFC kartı şu anda aktif değil");
+          setLoading(false);
+          return;
+        }
+
+        // Abonelik süresi kontrolü
+        if (nfcData.subscription_end_date) {
+          const endDate = new Date(nfcData.subscription_end_date);
+          if (endDate < new Date()) {
+            // Abonelik süresi dolmuş, NFC'yi devre dışı bırak
+            await supabase
+              .from("nfcs")
+              .update({ 
+                is_active: false, 
+                subscription_status: "expired",
+                updated_at: new Date().toISOString() 
+              })
+              .eq("id", nfcData.id);
+            
+            setError("Bu NFC kartının abonelik süresi dolmuştur. Kart sahibi aboneliğini yenileyene kadar erişilemez.");
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Tarama sayısını artır
+        await supabase
+          .from("nfcs")
+          .update({ 
+            scan_count: (nfcData.scan_count || 0) + 1,
+            last_scanned_at: new Date().toISOString()
+          })
+          .eq("id", nfcData.id);
+
+        // NFC scan kaydı oluştur
+        await supabase
+          .from("nfc_scans")
+          .insert({
+            nfc_id: nfcData.id,
+            user_agent: navigator.userAgent,
+          });
+
+        setData(nfcData.data as BusinessCardData);
+      } catch (err) {
+        console.error("NFC veri çekme hatası:", err);
+        setError("Bir hata oluştu");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchNFCData();
+  }, [key, isDemo]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen gradient-hero flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-primary" />
+          <p className="text-muted-foreground">Yükleniyor...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="min-h-screen gradient-hero flex items-center justify-center p-4">
+        <div className="bg-card rounded-3xl p-8 text-center max-w-md shadow-2xl">
+          <AlertCircle className="w-16 h-16 text-destructive mx-auto mb-4" />
+          <h1 className="text-xl font-bold mb-2">{error || "Sayfa Bulunamadı"}</h1>
+          <p className="text-muted-foreground mb-6">
+            Bu NFC kartı mevcut değil veya erişilemez durumda.
+          </p>
+          <Button variant="outline" onClick={() => window.location.href = "/"}>
+            Ana Sayfaya Dön
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const theme = themeStyles[data.theme || "default"] || themeStyles.default;
+  const whatsappNumber = data.whatsapp || data.phone?.replace(/[\s\-\(\)]/g, "");
 
   const socialLinks = [
-    { icon: Phone, label: "Ara", href: `tel:${data.phone}`, color: "bg-accent" },
+    { icon: Phone, label: "Ara", href: `tel:${data.phone}`, color: "bg-green-500" },
     { icon: Mail, label: "E-posta", href: `mailto:${data.email}`, color: "bg-primary" },
-    { icon: MessageCircle, label: "WhatsApp", href: `https://wa.me/${data.whatsapp}`, color: "bg-green-500" },
+    { icon: MessageCircle, label: "WhatsApp", href: `https://wa.me/${whatsappNumber}`, color: "bg-emerald-500" },
   ];
 
   const otherLinks = [
-    { icon: Linkedin, label: "LinkedIn", href: `https://linkedin.com/in/${data.linkedin}` },
-    { icon: Instagram, label: "Instagram", href: `https://instagram.com/${data.instagram}` },
+    { icon: Linkedin, label: "LinkedIn", href: data.linkedin ? `https://linkedin.com/in/${data.linkedin.replace(/^(https?:\/\/)?(www\.)?linkedin\.com\/in\//i, "")}` : null },
+    { icon: Instagram, label: "Instagram", href: data.instagram ? `https://instagram.com/${data.instagram.replace(/^@/, "").replace(/^(https?:\/\/)?(www\.)?instagram\.com\//i, "")}` : null },
     { icon: Globe, label: "Website", href: data.website },
-  ];
+  ].filter(link => link.href);
+
+  // VCF dosyası oluştur
+  const generateVCard = () => {
+    const vcard = `BEGIN:VCARD
+VERSION:3.0
+FN:${data.name}
+TITLE:${data.title}
+ORG:${data.company}
+TEL:${data.phone}
+EMAIL:${data.email}
+${data.website ? `URL:${data.website}` : ""}
+${data.linkedin ? `X-SOCIALPROFILE;type=linkedin:https://linkedin.com/in/${data.linkedin}` : ""}
+NOTE:${data.bio || ""}
+END:VCARD`;
+
+    const blob = new Blob([vcard], { type: "text/vcard" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${data.name.replace(/\s+/g, "_")}.vcf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="min-h-screen gradient-hero flex items-center justify-center p-4">
@@ -55,19 +212,23 @@ export default function NFCBusinessCard() {
       >
         <div className="bg-card rounded-3xl shadow-2xl overflow-hidden">
           {/* Header */}
-          <div className="gradient-primary p-8 text-center relative">
+          <div className={cn("bg-gradient-to-r p-8 text-center relative", theme.gradient)}>
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxjaXJjbGUgY3g9IjIwIiBjeT0iMjAiIHI9IjIiIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iLjEiLz48L2c+PC9zdmc+')] opacity-20" />
             <motion.div
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ delay: 0.2, type: "spring" }}
-              className="w-28 h-28 mx-auto bg-card rounded-full flex items-center justify-center shadow-xl mb-4 relative z-10"
+              className="w-28 h-28 mx-auto bg-card rounded-full flex items-center justify-center shadow-xl mb-4 relative z-10 overflow-hidden"
             >
-              <User className="w-14 h-14 text-primary" />
+              {data.avatar ? (
+                <img src={data.avatar} alt={data.name} className="w-full h-full object-cover" />
+              ) : (
+                <User className="w-14 h-14 text-primary" />
+              )}
             </motion.div>
             <h1 className="text-2xl font-bold text-primary-foreground">{data.name}</h1>
             <p className="text-primary-foreground/80 mt-1">{data.title}</p>
-            <p className="text-primary-foreground/60 text-sm">{data.company}</p>
+            {data.company && <p className="text-primary-foreground/60 text-sm">{data.company}</p>}
           </div>
 
           {/* Quick Actions */}
@@ -99,12 +260,12 @@ export default function NFCBusinessCard() {
           )}
 
           {/* Links */}
-          <div className="p-6 space-y-3">
-            {otherLinks.map((link, index) => (
-              link.href && (
+          {otherLinks.length > 0 && (
+            <div className="p-6 space-y-3">
+              {otherLinks.map((link, index) => (
                 <motion.a
                   key={link.label}
-                  href={link.href}
+                  href={link.href!}
                   target="_blank"
                   rel="noopener noreferrer"
                   initial={{ opacity: 0, x: -20 }}
@@ -117,22 +278,27 @@ export default function NFCBusinessCard() {
                   </div>
                   <span className="font-medium">{link.label}</span>
                 </motion.a>
-              )
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           {/* Save Contact */}
           <div className="p-6 pt-0">
-            <Button variant="hero" className="w-full" size="lg">
+            <Button 
+              variant="hero" 
+              className="w-full" 
+              size="lg"
+              onClick={generateVCard}
+            >
               Kişilere Kaydet
             </Button>
           </div>
 
           {/* Footer */}
           <div className="px-6 pb-6 text-center">
-            <p className="text-xs text-muted-foreground">
+            <a href="/" className="text-xs text-muted-foreground hover:text-primary transition-colors">
               Powered by <span className="text-gradient font-semibold">NFCLink</span>
-            </p>
+            </a>
           </div>
         </div>
       </motion.div>
