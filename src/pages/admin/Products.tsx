@@ -39,6 +39,8 @@ interface Category {
   is_active: boolean;
 }
 
+type NFCType = "business-card" | "pet-id" | "redirect" | null;
+
 interface Product {
   id: number;
   name: string;
@@ -58,9 +60,16 @@ interface Product {
   sku: string | null;
   is_active: boolean;
   sort_order: number;
+  nfc_type: NFCType;
   created_at: string;
   updated_at: string;
 }
+
+const NFC_TYPE_OPTIONS = [
+  { value: "business-card", label: "Dijital Kartvizit", description: "İsim, telefon, sosyal medya bilgileri" },
+  { value: "pet-id", label: "Evcil Hayvan Kimliği", description: "Hayvan bilgileri, sahip iletişimi" },
+  { value: "redirect", label: "Özel Yönlendirme", description: "Sevgililer sayfası, galeri, anılar" },
+];
 
 const emptyProduct: Partial<Product> = {
   name: "",
@@ -79,6 +88,7 @@ const emptyProduct: Partial<Product> = {
   sku: "",
   is_active: true,
   sort_order: 0,
+  nfc_type: null,
 };
 
 export default function AdminProducts() {
@@ -166,6 +176,7 @@ export default function AdminProducts() {
         sku: editingProduct.sku || null,
         is_active: editingProduct.is_active ?? true,
         sort_order: editingProduct.sort_order || 0,
+        nfc_type: editingProduct.nfc_type || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -681,10 +692,21 @@ export default function AdminProducts() {
                       value={editingProduct?.category || ""}
                       onChange={(e) => {
                         const cat = categories.find(c => c.name === e.target.value);
+                        // Kategori adına göre otomatik NFC tipi belirleme
+                        let autoNfcType: NFCType = null;
+                        const catName = e.target.value.toLowerCase();
+                        if (catName.includes("kartvizit") || catName.includes("dijital")) {
+                          autoNfcType = "business-card";
+                        } else if (catName.includes("evcil") || catName.includes("hayvan")) {
+                          autoNfcType = "pet-id";
+                        } else if (catName.includes("yönlendirme") || catName.includes("özel")) {
+                          autoNfcType = "redirect";
+                        }
                         setEditingProduct({ 
                           ...editingProduct, 
                           category: e.target.value,
-                          category_id: cat?.id || null
+                          category_id: cat?.id || null,
+                          nfc_type: editingProduct?.nfc_type || autoNfcType
                         });
                       }}
                       className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
@@ -696,6 +718,29 @@ export default function AdminProducts() {
                     </select>
                   </div>
 
+                  <div>
+                    <Label htmlFor="nfc_type">NFC Tipi *</Label>
+                    <select
+                      id="nfc_type"
+                      value={editingProduct?.nfc_type || ""}
+                      onChange={(e) => setEditingProduct({ 
+                        ...editingProduct, 
+                        nfc_type: (e.target.value as NFCType) || null 
+                      })}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    >
+                      <option value="">Seçin...</option>
+                      {NFC_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {NFC_TYPE_OPTIONS.find(o => o.value === editingProduct?.nfc_type)?.description || "Ürünün NFC sayfası tipini belirler"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="sku">SKU (Stok Kodu)</Label>
                     <Input

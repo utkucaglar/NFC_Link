@@ -9,7 +9,7 @@ import { useCart } from "@/contexts/CartContext";
 import { toast } from "sonner";
 import { getProductImage } from "@/lib/helpers";
 
-// Kişiselleştirme gerektiren kategoriler
+// Kişiselleştirme gerektiren kategoriler (tüm NFC ürünleri)
 const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik"];
 
 const categories = ["Tümü", "Profesyonel", "Spor & Etkinlik", "Evcil Hayvan"];

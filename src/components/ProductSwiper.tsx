@@ -24,7 +24,7 @@ const getProductImage = (imageUrl: string | null, category: string) => {
     return imageUrl;
   }
   // Fallback to local images based on category
-  if (category === "Profesyonel") return productCard;
+  if (category === "Profesyonel" || category === "Premium") return productCard;
   if (category === "Spor & Etkinlik") return productBand;
   if (category === "Evcil Hayvan") return productPetTag;
   return productCard;

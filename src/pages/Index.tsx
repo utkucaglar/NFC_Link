@@ -10,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { getProductImage, formatPrice } from "@/lib/helpers";
 import { toast } from "sonner";
 
-// Kişiselleştirme gerektiren kategoriler
+// Kişiselleştirme gerektiren kategoriler (tüm NFC ürünleri)
 const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik"];
 
 const fadeInUp = {

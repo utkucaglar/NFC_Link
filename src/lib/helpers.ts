@@ -149,12 +149,12 @@ export const DEFAULT_FEATURES: Record<string, string[]> = {
     "Özel kutu ile teslimat",
   ],
   "Spor & Etkinlik": [
-    "IP68 su geçirmezlik",
-    "Hipoalerjenik silikon",
-    "Ayarlanabilir boyut",
-    "Ter ve tuzlu suya dayanıklı",
-    "Hafif tasarım",
-    "Farklı renk seçenekleri",
+    "Kişiselleştirilmiş sevgililer sayfası",
+    "Fotoğraf galerisi özelliği",
+    "Anılar ve manifest bölümleri",
+    "Özel tema seçenekleri",
+    "İlişki sayacı",
+    "Sınırsız içerik ekleme",
   ],
   "Evcil Hayvan": [
     "Paslanmaz çelik gövde",
@@ -187,7 +187,7 @@ export const DEFAULT_SPECS: Record<string, Record<string, string>> = {
     "Okuma Mesafesi": "1-5 cm",
   },
   "Spor & Etkinlik": {
-    Boyut: "Ayarlanabilir (16-22 cm)",
+    Boyut: "Ayarlanabilir bileklik",
     Genişlik: "12 mm",
     Malzeme: "Medikal silikon",
     "NFC Chip": "NTAG213",
@@ -210,6 +210,6 @@ export const DEFAULT_SPECS: Record<string, Record<string, string>> = {
 export const DEFAULT_COLORS: Record<string, string[]> = {
   Profesyonel: ["Beyaz", "Siyah", "Gri"],
   Premium: ["Siyah", "Altın", "Gümüş"],
-  "Spor & Etkinlik": ["Siyah", "Mavi", "Kırmızı", "Yeşil", "Beyaz"],
+  "Spor & Etkinlik": ["Siyah", "Beyaz", "Pembe", "Kırmızı"],
   "Evcil Hayvan": ["Altın", "Gümüş", "Rose Gold"],
 };

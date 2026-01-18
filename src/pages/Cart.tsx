@@ -9,7 +9,7 @@ import { useCart } from "@/contexts/CartContext";
 import { toast } from "sonner";
 
 // Kişiselleştirme gerektiren NFC tipleri
-const CUSTOMIZATION_NFC_TYPES = ["business-card", "pet-id"];
+const CUSTOMIZATION_NFC_TYPES = ["business-card", "pet-id", "redirect"];
 
 export default function Cart() {
   const { cartItems, updateQuantity, removeFromCart, cartTotal } = useCart();

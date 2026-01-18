@@ -44,7 +44,7 @@ interface Product {
   nfc_type: NFCType;
 }
 
-// Kategori bazlı NFC tipi belirleme (veritabanında nfc_type yoksa)
+// Kategori bazlı NFC tipi belirleme (veritabanında nfc_type yoksa fallback)
 const getNfcTypeFromCategory = (category: string): NFCType => {
   const cat = category?.toLowerCase() || "";
   if (cat.includes("profesyonel") || cat.includes("premium")) return "business-card";
