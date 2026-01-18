@@ -8,23 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
-import productCard from "@/assets/product-nfc-card.png";
-import productBand from "@/assets/product-nfc-band.png";
-import productPetTag from "@/assets/product-pet-tag.png";
-
-// Helper function to get product image with fallback
-const getProductImage = (imageUrl: string | null | undefined, productName: string) => {
-  if (imageUrl && imageUrl.startsWith('http')) {
-    return imageUrl;
-  }
-  const name = productName?.toLowerCase() || '';
-  if (name.includes('kartvizit') || name.includes('card')) return productCard;
-  if (name.includes('bileklik') || name.includes('band')) return productBand;
-  if (name.includes('pet') || name.includes('tag')) return productPetTag;
-  return productCard;
-};
-
-type OrderStatus = "pending" | "confirmed" | "production" | "shipped" | "delivered" | "cancelled";
+import { 
+  getProductImage, 
+  formatPrice, 
+  formatDateTime, 
+  ORDER_STATUS_CONFIG, 
+  ORDER_STATUS_FLOW,
+  type OrderStatus 
+} from "@/lib/helpers";
 
 interface OrderItem {
   id: string;
@@ -34,10 +25,7 @@ interface OrderItem {
   customization: Record<string, any> | null;
   admin_notes: string | null;
   customization_confirmed: boolean;
-  products?: {
-    name: string;
-    image_url: string;
-  };
+  products?: { name: string; image_url: string };
 }
 
 interface Order {
@@ -54,37 +42,13 @@ interface Order {
   order_items?: OrderItem[];
 }
 
-const statusConfig: Record<OrderStatus, { label: string; color: string; icon: React.ElementType }> = {
-  pending: {
-    label: "Beklemede",
-    color: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20",
-    icon: Clock
-  },
-  confirmed: {
-    label: "Onaylandı",
-    color: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-    icon: CheckCircle2
-  },
-  production: {
-    label: "Üretimde",
-    color: "bg-purple-500/10 text-purple-600 border-purple-500/20",
-    icon: CircleDot
-  },
-  shipped: {
-    label: "Kargoda",
-    color: "bg-primary/10 text-primary border-primary/20",
-    icon: Truck
-  },
-  delivered: {
-    label: "Teslim Edildi",
-    color: "bg-accent/10 text-accent border-accent/20",
-    icon: CheckCircle2
-  },
-  cancelled: {
-    label: "İptal Edildi",
-    color: "bg-destructive/10 text-destructive border-destructive/20",
-    icon: X
-  }
+const statusIcons: Record<OrderStatus, React.ElementType> = {
+  pending: Clock,
+  confirmed: CheckCircle2,
+  production: CircleDot,
+  shipped: Truck,
+  delivered: CheckCircle2,
+  cancelled: X,
 };
 
 export default function Orders() {
@@ -162,7 +126,7 @@ export default function Orders() {
 
           <div className="space-y-4">
             {orders.map((order, index) => {
-              const StatusIcon = statusConfig[order.status]?.icon || Clock;
+              const StatusIcon = statusIcons[order.status] || Clock;
               const isExpanded = expandedOrder === order.id;
               
               return (
@@ -182,9 +146,9 @@ export default function Orders() {
                       <div>
                         <div className="flex items-center gap-3 mb-1">
                           <h3 className="font-semibold">{order.order_number}</h3>
-                          <Badge className={cn("border", statusConfig[order.status]?.color)}>
+                          <Badge className={cn("border", ORDER_STATUS_CONFIG[order.status]?.color)}>
                             <StatusIcon className="w-3 h-3 mr-1" />
-                            {statusConfig[order.status]?.label}
+                            {ORDER_STATUS_CONFIG[order.status]?.label}
                           </Badge>
                         </div>
                         <p className="text-sm text-muted-foreground">
@@ -357,8 +321,8 @@ export default function Orders() {
                             <div className="pt-4 border-t border-border">
                               <h4 className="font-medium mb-4">Sipariş Durumu</h4>
                               <div className="flex justify-between mb-2">
-                                {(["pending", "confirmed", "production", "shipped", "delivered"] as OrderStatus[]).map((step, i) => {
-                                  const stepIndex = ["pending", "confirmed", "production", "shipped", "delivered"].indexOf(order.status);
+                                {ORDER_STATUS_FLOW.map((step, i) => {
+                                  const stepIndex = ORDER_STATUS_FLOW.indexOf(order.status);
                                   const currentIndex = i;
                                   const isCompleted = currentIndex <= stepIndex;
                                   
@@ -374,7 +338,7 @@ export default function Orders() {
                                         "text-xs mt-2 text-center max-w-[60px]",
                                         isCompleted ? "text-primary font-medium" : "text-muted-foreground"
                                       )}>
-                                        {statusConfig[step].label}
+                                        {ORDER_STATUS_CONFIG[step].label}
                                       </span>
                                     </div>
                                   );
@@ -384,7 +348,7 @@ export default function Orders() {
                                 <div 
                                   className="h-full gradient-primary transition-all duration-500"
                                   style={{
-                                    width: `${(["pending", "confirmed", "production", "shipped", "delivered"].indexOf(order.status) + 1) * 20}%`
+                                    width: `${(ORDER_STATUS_FLOW.indexOf(order.status) + 1) * 20}%`
                                   }}
                                 />
                               </div>

@@ -7,21 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
 import ProductSwiper from "@/components/ProductSwiper";
 import { supabase } from "@/lib/supabase";
-import productCard from "@/assets/product-nfc-card.png";
-import productBand from "@/assets/product-nfc-band.png";
-import productPetTag from "@/assets/product-pet-tag.png";
-
-// Helper function to get product image with fallback
-const getProductImage = (imageUrl: string | null, category: string) => {
-  if (imageUrl && imageUrl.startsWith('http')) {
-    return imageUrl;
-  }
-  // Fallback to local images based on category
-  if (category === "Profesyonel" || category === "Premium") return productCard;
-  if (category === "Spor & Etkinlik") return productBand;
-  if (category === "Evcil Hayvan") return productPetTag;
-  return productCard;
-};
+import { getProductImage, formatPrice } from "@/lib/helpers";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },

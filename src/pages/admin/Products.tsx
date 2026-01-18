@@ -10,9 +10,6 @@ import {
   EyeOff,
   Save,
   X,
-  ChevronDown,
-  ChevronUp,
-  GripVertical,
   ArrowUp,
   ArrowDown,
   Pencil,
@@ -33,20 +30,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import productCard from "@/assets/product-nfc-card.png";
-import productBand from "@/assets/product-nfc-band.png";
-import productPetTag from "@/assets/product-pet-tag.png";
-
-// Helper function to get product image with fallback
-const getProductImage = (imageUrl: string | null, category: string) => {
-  if (imageUrl && imageUrl.startsWith('http')) {
-    return imageUrl;
-  }
-  if (category === "Profesyonel" || category === "Premium") return productCard;
-  if (category === "Spor & Etkinlik") return productBand;
-  if (category === "Evcil Hayvan") return productPetTag;
-  return productCard;
-};
+import { getProductImage, formatPrice } from "@/lib/helpers";
 
 interface Category {
   id: number;

@@ -1,30 +1,15 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Search, Filter, ShoppingCart, Loader2 } from "lucide-react";
+import { Search, ShoppingCart, Loader2 } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
-import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
-import productCard from "@/assets/product-nfc-card.png";
-import productBand from "@/assets/product-nfc-band.png";
-import productPetTag from "@/assets/product-pet-tag.png";
+import { getProductImage } from "@/lib/helpers";
 
 const categories = ["Tümü", "Profesyonel", "Spor & Etkinlik", "Evcil Hayvan"];
-
-// Helper function to get product image
-const getProductImage = (imageUrl: string | null, category: string) => {
-  if (imageUrl && imageUrl.startsWith('http')) {
-    return imageUrl;
-  }
-  // Fallback to local images based on category
-  if (category === "Profesyonel") return productCard;
-  if (category === "Spor & Etkinlik") return productBand;
-  if (category === "Evcil Hayvan") return productPetTag;
-  return productCard;
-};
 
 interface Product {
   id: number;

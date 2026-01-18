@@ -151,28 +151,21 @@ ${formData.addressLine2 ? formData.addressLine2 + '\n' : ''}${formData.district 
 ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
 
       // Siparişi veritabanına kaydet
-      console.log("Creating order for user:", user?.id);
-      
       const { data: orderData, error: orderError } = await supabase
         .from("orders")
         .insert({
           user_id: user?.id,
           order_number: orderNumber,
           status: "pending",
-          subtotal: subtotal,
+          subtotal,
           discount_amount: 0,
-          total: total,
+          total,
           shipping_address: shippingAddress,
         })
         .select()
         .single();
 
-      if (orderError) {
-        console.error("Order creation error:", orderError);
-        throw orderError;
-      }
-      
-      console.log("Order created:", orderData);
+      if (orderError) throw orderError;
 
       // Sipariş kalemlerini kaydet
       const orderItems = cartItems.map(item => ({

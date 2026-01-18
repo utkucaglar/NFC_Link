@@ -4,7 +4,6 @@ import { useSearchParams } from "react-router-dom";
 import {
   Package,
   Search,
-  Filter,
   ChevronDown,
   ChevronUp,
   Clock,
@@ -13,7 +12,6 @@ import {
   CircleDot,
   X,
   Save,
-  Eye,
   Edit,
   Check,
 } from "lucide-react";
@@ -21,31 +19,10 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import productCard from "@/assets/product-nfc-card.png";
-import productBand from "@/assets/product-nfc-band.png";
-import productPetTag from "@/assets/product-pet-tag.png";
-
-// Helper function to get product image with fallback
-const getProductImage = (imageUrl: string | null | undefined, productName: string) => {
-  if (imageUrl && imageUrl.startsWith('http')) {
-    return imageUrl;
-  }
-  // Fallback based on product name
-  const name = productName?.toLowerCase() || '';
-  if (name.includes('kartvizit') || name.includes('card')) return productCard;
-  if (name.includes('bileklik') || name.includes('band')) return productBand;
-  if (name.includes('pet') || name.includes('tag')) return productPetTag;
-  return productCard;
-};
+import { getProductImage, ORDER_STATUS_CONFIG, ORDER_STATUS_FLOW, type OrderStatus } from "@/lib/helpers";
 
 interface OrderItem {
   id: string;
@@ -84,18 +61,14 @@ interface Order {
   order_items?: OrderItem[];
 }
 
-type OrderStatus = "pending" | "confirmed" | "production" | "shipped" | "delivered" | "cancelled";
-
-const statusConfig: Record<OrderStatus, { label: string; color: string; icon: React.ElementType }> = {
-  pending: { label: "Beklemede", color: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20", icon: Clock },
-  confirmed: { label: "Onaylandı", color: "bg-blue-500/10 text-blue-600 border-blue-500/20", icon: CheckCircle2 },
-  production: { label: "Üretimde", color: "bg-purple-500/10 text-purple-600 border-purple-500/20", icon: CircleDot },
-  shipped: { label: "Kargoda", color: "bg-primary/10 text-primary border-primary/20", icon: Truck },
-  delivered: { label: "Teslim Edildi", color: "bg-accent/10 text-accent border-accent/20", icon: CheckCircle2 },
-  cancelled: { label: "İptal Edildi", color: "bg-destructive/10 text-destructive border-destructive/20", icon: X },
+const statusIcons: Record<OrderStatus, React.ElementType> = {
+  pending: Clock,
+  confirmed: CheckCircle2,
+  production: CircleDot,
+  shipped: Truck,
+  delivered: CheckCircle2,
+  cancelled: X,
 };
-
-const statusOrder: OrderStatus[] = ["pending", "confirmed", "production", "shipped", "delivered"];
 
 export default function AdminOrders() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -117,55 +90,30 @@ export default function AdminOrders() {
 
   const fetchOrders = async () => {
     try {
-      console.log("Fetching orders...");
-      
-      // Önce siparişleri çek
       const { data: ordersData, error: ordersError } = await supabase
         .from("orders")
-        .select(`
-          *,
-          order_items(
-            *,
-            products(name, image_url)
-          )
-        `)
+        .select(`*, order_items(*, products(name, image_url))`)
         .order("created_at", { ascending: false });
 
-      if (ordersError) {
-        console.error("Orders fetch error:", ordersError);
-        throw ordersError;
-      }
+      if (ordersError) throw ordersError;
 
-      // Kullanıcı bilgilerini ayrı çek
-      if (ordersData && ordersData.length > 0) {
+      if (ordersData?.length) {
         const userIds = [...new Set(ordersData.map(o => o.user_id))];
-        
-        const { data: profilesData, error: profilesError } = await supabase
+        const { data: profilesData } = await supabase
           .from("user_profiles")
           .select("id, first_name, last_name, email, phone")
           .in("id", userIds);
 
-        if (profilesError) {
-          console.error("Profiles fetch error:", profilesError);
-        }
-
-        // Profilleri siparişlere ekle
         const profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
-        const ordersWithProfiles = ordersData.map(order => ({
+        setOrders(ordersData.map(order => ({
           ...order,
           user_profiles: profilesMap.get(order.user_id) || null
-        }));
-
-        console.log("Orders fetched:", ordersWithProfiles.length, "orders found");
-        setOrders(ordersWithProfiles);
+        })));
       } else {
-        console.log("No orders found");
         setOrders([]);
       }
     } catch (error: any) {
-      console.error("Siparişler yüklenirken hata:", error);
-      console.error("Error details:", error?.message, error?.code, error?.details);
-      toast.error(`Siparişler yüklenemedi: ${error?.message || "Bilinmeyen hata"}`);
+      toast.error("Siparişler yüklenemedi");
     } finally {
       setLoading(false);
     }
@@ -298,7 +246,7 @@ export default function AdminOrders() {
             >
               Tümü
             </Button>
-            {Object.entries(statusConfig).map(([key, config]) => (
+            {Object.entries(ORDER_STATUS_CONFIG).map(([key, config]) => (
               <Button
                 key={key}
                 variant={statusFilter === key ? "default" : "outline"}
@@ -324,7 +272,7 @@ export default function AdminOrders() {
             </motion.div>
           ) : (
             filteredOrders.map((order, index) => {
-              const StatusIcon = statusConfig[order.status as OrderStatus]?.icon || Clock;
+              const StatusIcon = statusIcons[order.status as OrderStatus] || Clock;
               const isExpanded = expandedOrder === order.id;
 
               return (
@@ -348,9 +296,9 @@ export default function AdminOrders() {
                         <div>
                           <div className="flex items-center gap-3 mb-1">
                             <h3 className="font-semibold">{order.order_number}</h3>
-                            <Badge className={cn("border", statusConfig[order.status as OrderStatus]?.color)}>
+                            <Badge className={cn("border", ORDER_STATUS_CONFIG[order.status as OrderStatus]?.color)}>
                               <StatusIcon className="w-3 h-3 mr-1" />
-                              {statusConfig[order.status as OrderStatus]?.label}
+                              {ORDER_STATUS_CONFIG[order.status as OrderStatus]?.label}
                             </Badge>
                           </div>
                           <p className="text-sm text-muted-foreground">
@@ -520,7 +468,7 @@ export default function AdminOrders() {
                           <div>
                             <h4 className="font-medium mb-3">Sipariş Durumu</h4>
                             <div className="flex flex-wrap gap-2">
-                              {statusOrder.map((status) => (
+                              {ORDER_STATUS_FLOW.map((status) => (
                                 <Button
                                   key={status}
                                   size="sm"
@@ -534,7 +482,7 @@ export default function AdminOrders() {
                                     updateOrderStatus(order.id, status, trackingInput || undefined);
                                   }}
                                 >
-                                  {statusConfig[status].label}
+                                  {ORDER_STATUS_CONFIG[status].label}
                                 </Button>
                               ))}
                               <Button

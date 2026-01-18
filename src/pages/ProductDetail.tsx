@@ -6,99 +6,13 @@ import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
 import { supabase } from "@/lib/supabase";
-import productCard from "@/assets/product-nfc-card.png";
-import productBand from "@/assets/product-nfc-band.png";
-import productPetTag from "@/assets/product-pet-tag.png";
-
-// Helper function to get product image with fallback
-const getProductImage = (imageUrl: string | null, category: string) => {
-  if (imageUrl && imageUrl.startsWith('http')) {
-    return imageUrl;
-  }
-  // Fallback to local images based on category
-  if (category === "Profesyonel" || category === "Premium") return productCard;
-  if (category === "Spor & Etkinlik") return productBand;
-  if (category === "Evcil Hayvan") return productPetTag;
-  return productCard;
-};
-
-// Varsayılan özellikler (veritabanında yoksa kullanılır)
-const defaultFeaturesByCategory: Record<string, string[]> = {
-  "Profesyonel": [
-    "Yüksek kaliteli PVC malzeme",
-    "Su ve çizilmeye dayanıklı",
-    "10+ yıl dayanıklılık",
-    "Tüm NFC uyumlu telefonlarla çalışır",
-    "Uygulama indirme gerektirmez",
-    "Anında aktivasyon"
-  ],
-  "Premium": [
-    "Metal kaplama premium yüzey",
-    "Lazer gravür seçeneği",
-    "Su ve çizilmeye dayanıklı",
-    "15+ yıl dayanıklılık",
-    "VIP müşteri desteği",
-    "Özel kutu ile teslimat"
-  ],
-  "Spor & Etkinlik": [
-    "IP68 su geçirmezlik",
-    "Hipoalerjenik silikon",
-    "Ayarlanabilir boyut",
-    "Ter ve tuzlu suya dayanıklı",
-    "Hafif tasarım",
-    "Farklı renk seçenekleri"
-  ],
-  "Evcil Hayvan": [
-    "Paslanmaz çelik gövde",
-    "Su geçirmez",
-    "QR kod + NFC çift teknoloji",
-    "Acil durum bilgileri",
-    "Hafif ve dayanıklı",
-    "Ücretsiz gravür seçeneği"
-  ]
-};
-
-const defaultSpecsByCategory: Record<string, Record<string, string>> = {
-  "Profesyonel": {
-    "Boyut": "85.6 x 54 mm (Standart kart boyutu)",
-    "Kalınlık": "0.8 mm",
-    "Malzeme": "Premium PVC",
-    "NFC Chip": "NTAG216",
-    "Hafıza": "888 bytes",
-    "Okuma Mesafesi": "1-5 cm"
-  },
-  "Premium": {
-    "Boyut": "85.6 x 54 mm (Standart kart boyutu)",
-    "Kalınlık": "1.0 mm",
-    "Malzeme": "Metal kaplama PVC",
-    "NFC Chip": "NTAG216",
-    "Hafıza": "888 bytes",
-    "Okuma Mesafesi": "1-5 cm"
-  },
-  "Spor & Etkinlik": {
-    "Boyut": "Ayarlanabilir (16-22 cm)",
-    "Genişlik": "12 mm",
-    "Malzeme": "Medikal silikon",
-    "NFC Chip": "NTAG213",
-    "Hafıza": "144 bytes",
-    "Okuma Mesafesi": "1-3 cm"
-  },
-  "Evcil Hayvan": {
-    "Boyut": "30 mm çap",
-    "Kalınlık": "2 mm",
-    "Malzeme": "Paslanmaz çelik",
-    "NFC Chip": "NTAG213",
-    "Hafıza": "144 bytes",
-    "Ağırlık": "8g"
-  }
-};
-
-const defaultColorsByCategory: Record<string, string[]> = {
-  "Profesyonel": ["Beyaz", "Siyah", "Gri"],
-  "Premium": ["Siyah", "Altın", "Gümüş"],
-  "Spor & Etkinlik": ["Siyah", "Mavi", "Kırmızı", "Yeşil", "Beyaz"],
-  "Evcil Hayvan": ["Altın", "Gümüş", "Rose Gold"]
-};
+import { 
+  getProductImage, 
+  formatPrice,
+  DEFAULT_FEATURES, 
+  DEFAULT_SPECS, 
+  DEFAULT_COLORS 
+} from "@/lib/helpers";
 
 interface Product {
   id: number;
@@ -209,17 +123,17 @@ export default function ProductDetail() {
   }
 
   // Veritabanından gelen değerler veya kategori bazlı varsayılanlar
-  const features = (product.features && product.features.length > 0) 
+  const features = product.features?.length 
     ? product.features 
-    : defaultFeaturesByCategory[product.category] || defaultFeaturesByCategory["Profesyonel"];
+    : DEFAULT_FEATURES[product.category] || DEFAULT_FEATURES["Profesyonel"];
   
-  const specs = (product.specs && Object.keys(product.specs).length > 0)
+  const specs = product.specs && Object.keys(product.specs).length
     ? product.specs
-    : defaultSpecsByCategory[product.category] || defaultSpecsByCategory["Profesyonel"];
+    : DEFAULT_SPECS[product.category] || DEFAULT_SPECS["Profesyonel"];
   
-  const colors = (product.colors && product.colors.length > 0)
+  const colors = product.colors?.length
     ? product.colors
-    : defaultColorsByCategory[product.category] || ["Standart"];
+    : DEFAULT_COLORS[product.category] || ["Standart"];
   
   const productImage = getProductImage(product.image_url, product.category);
   const longDescription = product.long_description || product.description || "Profesyonel NFC çözümü ile dijital varlığınızı paylaşın.";
