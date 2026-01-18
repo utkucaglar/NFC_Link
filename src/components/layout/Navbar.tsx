@@ -13,12 +13,14 @@ const customerNavItems = [
   { name: "Ürünler", path: "/products" },
   { name: "NFC'lerim", path: "/my-nfc" },
   { name: "Siparişlerim", path: "/orders" },
+  { name: "Destek", path: "/contact" },
 ];
 
 // Admin için navigasyon linkleri (sepet, NFC'lerim, siparişlerim yok)
 const adminNavItems = [
   { name: "Anasayfa", path: "/" },
   { name: "Ürünler", path: "/products" },
+  { name: "Destek", path: "/contact" },
 ];
 
 export function Navbar() {

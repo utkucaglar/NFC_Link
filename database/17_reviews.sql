@@ -5,7 +5,7 @@
 -- Reviews tablosu
 CREATE TABLE IF NOT EXISTS reviews (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES user_profiles(id) ON DELETE CASCADE,
   product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
   order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
   rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
@@ -22,6 +22,20 @@ CREATE TABLE IF NOT EXISTS reviews (
   -- Her kullanıcı bir ürüne sadece bir yorum yapabilir
   UNIQUE(user_id, product_id)
 );
+
+-- user_profiles tablosuna foreign key ekle (eğer tablo zaten varsa)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints 
+    WHERE constraint_name = 'reviews_user_id_user_profiles_fkey'
+  ) THEN
+    -- Mevcut constraint'i kaldır ve yenisini ekle
+    ALTER TABLE reviews DROP CONSTRAINT IF EXISTS reviews_user_id_fkey;
+    ALTER TABLE reviews ADD CONSTRAINT reviews_user_id_user_profiles_fkey
+      FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_reviews_product_id ON reviews(product_id);

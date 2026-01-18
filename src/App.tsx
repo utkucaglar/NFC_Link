@@ -22,6 +22,7 @@ import NFCBusinessCard from "./pages/nfc/BusinessCard";
 import NFCPetId from "./pages/nfc/PetId";
 import NFCRedirect from "./pages/nfc/Redirect";
 import NotFound from "./pages/NotFound";
+import Contact from "./pages/Contact";
 // Admin Pages
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminOrders from "./pages/admin/Orders";
@@ -29,6 +30,7 @@ import AdminProducts from "./pages/admin/Products";
 import AdminDiscounts from "./pages/admin/Discounts";
 import AdminSubscriptions from "./pages/admin/Subscriptions";
 import AdminReviews from "./pages/admin/Reviews";
+import AdminSupport from "./pages/admin/Support";
 
 const App = () => (
   <AuthProvider>
@@ -36,7 +38,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <ScrollToTop />
           <Routes>
             <Route path="/" element={<Index />} />
@@ -46,6 +48,7 @@ const App = () => (
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/contact" element={<Contact />} />
             {/* Protected Routes - Temporarily without ProtectedRoute wrapper */}
             <Route path="/my-nfc" element={<MyNFC />} />
             <Route path="/orders" element={<Orders />} />
@@ -58,6 +61,7 @@ const App = () => (
             <Route path="/admin/discounts" element={<AdminRoute><AdminDiscounts /></AdminRoute>} />
             <Route path="/admin/subscriptions" element={<AdminRoute><AdminSubscriptions /></AdminRoute>} />
             <Route path="/admin/reviews" element={<AdminRoute><AdminReviews /></AdminRoute>} />
+            <Route path="/admin/support" element={<AdminRoute><AdminSupport /></AdminRoute>} />
             {/* NFC Public Pages */}
             <Route path="/nfc/business/:key" element={<NFCBusinessCard />} />
             <Route path="/nfc/pet/:key" element={<NFCPetId />} />

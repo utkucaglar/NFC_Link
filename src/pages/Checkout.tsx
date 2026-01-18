@@ -12,7 +12,10 @@ import {
   User,
   Building,
   Check,
-  Loader2
+  Loader2,
+  Tag,
+  X,
+  CheckCircle2
 } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -78,6 +81,18 @@ export default function Checkout() {
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
 
+  // Discount state
+  const [discountCode, setDiscountCode] = useState("");
+  const [discountLoading, setDiscountLoading] = useState(false);
+  const [appliedDiscount, setAppliedDiscount] = useState<{
+    id: string;
+    code: string;
+    discount_type: "percentage" | "fixed";
+    discount_value: number;
+    discountAmount: number;
+  } | null>(null);
+  const [discountError, setDiscountError] = useState("");
+
   // Pre-fill form with user profile data
   useEffect(() => {
     if (profile) {
@@ -89,6 +104,35 @@ export default function Checkout() {
       }));
     }
   }, [profile]);
+
+  // Load discount from localStorage (if applied in Cart)
+  useEffect(() => {
+    const savedDiscount = localStorage.getItem("appliedDiscount");
+    if (savedDiscount) {
+      try {
+        const discount = JSON.parse(savedDiscount);
+        // Recalculate discount amount based on current cart total
+        let calculatedDiscount = 0;
+        if (discount.discount_type === "percentage") {
+          calculatedDiscount = (cartTotal * discount.discount_value) / 100;
+          if (discount.max_discount_amount && calculatedDiscount > discount.max_discount_amount) {
+            calculatedDiscount = discount.max_discount_amount;
+          }
+        } else {
+          calculatedDiscount = discount.discount_value;
+        }
+        calculatedDiscount = Math.min(calculatedDiscount, cartTotal);
+        
+        setAppliedDiscount({
+          ...discount,
+          discountAmount: calculatedDiscount,
+        });
+        setDiscountCode(discount.code);
+      } catch (e) {
+        localStorage.removeItem("appliedDiscount");
+      }
+    }
+  }, [cartTotal]);
 
   // Redirect if cart is empty
   useEffect(() => {
@@ -168,7 +212,8 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           order_number: orderNumber,
           status: "pending",
           subtotal,
-          discount_amount: 0,
+          discount_id: appliedDiscount?.id || null,
+          discount_amount: discountAmount,
           total,
           shipping_address: shippingAddress,
         })
@@ -176,6 +221,20 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         .single();
 
       if (orderError) throw orderError;
+
+      // İndirim kullanımını kaydet
+      if (appliedDiscount && user) {
+        // discount_usages tablosuna kaydet
+        await supabase.from("discount_usages").insert({
+          discount_id: appliedDiscount.id,
+          user_id: user.id,
+          order_id: orderData.id,
+          discount_amount: discountAmount,
+        });
+
+        // usage_count'u artır
+        await supabase.rpc("increment_discount_usage", { discount_id: appliedDiscount.id });
+      }
 
       // Sipariş kalemlerini kaydet
       const orderItems = cartItems.map(item => ({
@@ -282,6 +341,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       
       toast.success(`Siparişiniz alındı! Sipariş No: ${orderNumber}`);
       clearCart();
+      localStorage.removeItem("appliedDiscount");
       navigate("/orders");
       
     } catch (error: any) {
@@ -292,10 +352,116 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
     }
   };
 
-  const monthlyFee = cartItems.reduce((sum, item) => sum + 29 * item.quantity, 0);
   const subtotal = cartTotal;
   const shipping = 0; // Ücretsiz kargo
-  const total = subtotal + shipping;
+  const discountAmount = appliedDiscount?.discountAmount || 0;
+  const total = Math.max(0, subtotal + shipping - discountAmount);
+
+  // İndirim kodu uygula
+  const handleApplyDiscount = async () => {
+    if (!discountCode.trim()) {
+      setDiscountError("İndirim kodu giriniz");
+      return;
+    }
+
+    setDiscountLoading(true);
+    setDiscountError("");
+
+    try {
+      // İndirim kodunu kontrol et
+      const { data: discount, error } = await supabase
+        .from("discounts")
+        .select("*")
+        .eq("code", discountCode.trim().toUpperCase())
+        .eq("is_active", true)
+        .single();
+
+      if (error || !discount) {
+        setDiscountError("Geçersiz indirim kodu");
+        setDiscountLoading(false);
+        return;
+      }
+
+      // Tarih kontrolü
+      const now = new Date();
+      if (discount.starts_at && new Date(discount.starts_at) > now) {
+        setDiscountError("Bu indirim kodu henüz aktif değil");
+        setDiscountLoading(false);
+        return;
+      }
+      if (discount.expires_at && new Date(discount.expires_at) < now) {
+        setDiscountError("Bu indirim kodunun süresi dolmuş");
+        setDiscountLoading(false);
+        return;
+      }
+
+      // Kullanım limiti kontrolü
+      if (discount.usage_limit && discount.usage_count >= discount.usage_limit) {
+        setDiscountError("Bu indirim kodu kullanım limitine ulaşmış");
+        setDiscountLoading(false);
+        return;
+      }
+
+      // Minimum tutar kontrolü
+      if (discount.min_order_amount && subtotal < discount.min_order_amount) {
+        setDiscountError(`Minimum sipariş tutarı: ₺${discount.min_order_amount}`);
+        setDiscountLoading(false);
+        return;
+      }
+
+      // Kullanıcı başına kullanım kontrolü
+      if (user && discount.per_user_limit) {
+        const { count } = await supabase
+          .from("discount_usages")
+          .select("*", { count: "exact", head: true })
+          .eq("discount_id", discount.id)
+          .eq("user_id", user.id);
+
+        if (count && count >= discount.per_user_limit) {
+          setDiscountError("Bu indirim kodunu daha önce kullandınız");
+          setDiscountLoading(false);
+          return;
+        }
+      }
+
+      // İndirim miktarını hesapla
+      let calculatedDiscount = 0;
+      if (discount.discount_type === "percentage") {
+        calculatedDiscount = (subtotal * discount.discount_value) / 100;
+        // Max indirim limiti kontrolü
+        if (discount.max_discount_amount && calculatedDiscount > discount.max_discount_amount) {
+          calculatedDiscount = discount.max_discount_amount;
+        }
+      } else {
+        calculatedDiscount = discount.discount_value;
+      }
+
+      // İndirim tutarı sipariş tutarını geçemez
+      calculatedDiscount = Math.min(calculatedDiscount, subtotal);
+
+      setAppliedDiscount({
+        id: discount.id,
+        code: discount.code,
+        discount_type: discount.discount_type,
+        discount_value: discount.discount_value,
+        discountAmount: calculatedDiscount,
+      });
+
+      toast.success(`İndirim kodu uygulandı: ₺${calculatedDiscount.toFixed(2)} indirim`);
+    } catch (err) {
+      console.error("İndirim kodu hatası:", err);
+      setDiscountError("İndirim kodu uygulanamadı");
+    } finally {
+      setDiscountLoading(false);
+    }
+  };
+
+  // İndirim kodunu kaldır
+  const handleRemoveDiscount = () => {
+    setAppliedDiscount(null);
+    setDiscountCode("");
+    setDiscountError("");
+  };
 
   if (cartItems.length === 0) {
     return null;
@@ -649,21 +815,78 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                   ))}
                 </div>
 
+                {/* Discount Code */}
+                <div className="border-t border-border pt-4 mb-4">
+                  <Label className="text-sm font-medium mb-2 block">İndirim Kodu</Label>
+                  {appliedDiscount ? (
+                    <div className="flex items-center justify-between bg-accent/10 border border-accent/30 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-accent" />
+                        <span className="text-sm font-medium">{appliedDiscount.code}</span>
+                        <span className="text-xs text-accent">
+                          (-₺{appliedDiscount.discountAmount.toFixed(2)})
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleRemoveDiscount}
+                        className="text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <Input
+                            value={discountCode}
+                            onChange={(e) => {
+                              setDiscountCode(e.target.value.toUpperCase());
+                              setDiscountError("");
+                            }}
+                            placeholder="Kod girin"
+                            className="pl-10 uppercase"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleApplyDiscount();
+                              }
+                            }}
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          onClick={handleApplyDiscount}
+                          disabled={discountLoading}
+                        >
+                          {discountLoading ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            "Uygula"
+                          )}
+                        </Button>
+                      </div>
+                      {discountError && (
+                        <p className="text-xs text-destructive">{discountError}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="border-t border-border pt-4 space-y-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Ara Toplam</span>
                     <span>₺{subtotal}</span>
                   </div>
+                  {appliedDiscount && (
+                    <div className="flex justify-between text-sm text-accent">
+                      <span>İndirim ({appliedDiscount.code})</span>
+                      <span>-₺{appliedDiscount.discountAmount.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Kargo</span>
-                    <span className="text-accent">Ücretsiz</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Aylık Abonelik</span>
-                    <span>₺{monthlyFee}/ay</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">İlk Ay</span>
                     <span className="text-accent">Ücretsiz</span>
                   </div>
                 </div>
@@ -671,11 +894,15 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                 <div className="border-t border-border mt-4 pt-4">
                   <div className="flex justify-between items-center">
                     <span className="font-semibold">Toplam</span>
-                    <span className="text-2xl font-bold text-gradient">₺{total}</span>
+                    <div className="text-right">
+                      {appliedDiscount && (
+                        <span className="text-sm text-muted-foreground line-through mr-2">
+                          ₺{subtotal}
+                        </span>
+                      )}
+                      <span className="text-2xl font-bold text-gradient">₺{total}</span>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    İlk aydan sonra aylık ₺{monthlyFee} abonelik ücreti
-                  </p>
                 </div>
 
                 {/* Trust Badges */}

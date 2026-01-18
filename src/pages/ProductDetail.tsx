@@ -203,7 +203,7 @@ export default function ProductDetail() {
           .select("*")
           .eq("product_id", product.id)
           .eq("user_id", user.id)
-          .single();
+          .maybeSingle();
         
         setUserReview(userReviewData);
       }
@@ -221,16 +221,19 @@ export default function ProductDetail() {
     }
 
     try {
-      // Kullanıcı bu ürünü satın almış mı?
-      const { data: orderData } = await supabase
-        .from("order_items")
+      // Kullanıcı bu ürünü satın almış mı? (orders tablosundan kontrol)
+      const { data: orderData, error: orderError } = await supabase
+        .from("orders")
         .select(`
           id,
-          orders!inner (user_id, status)
+          status,
+          order_items!inner (product_id)
         `)
-        .eq("product_id", product.id)
-        .eq("orders.user_id", user.id)
-        .in("orders.status", ["delivered", "shipped", "confirmed"]);
+        .eq("user_id", user.id)
+        .eq("order_items.product_id", product.id)
+        .in("status", ["delivered", "shipped", "confirmed", "pending"]);
+
+      console.log("Order check:", { orderData, orderError, productId: product.id, userId: user.id });
 
       const hasPurchased = orderData && orderData.length > 0;
 
@@ -240,10 +243,13 @@ export default function ProductDetail() {
         .select("id")
         .eq("product_id", product.id)
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
+
+      console.log("Review check:", { existingReview, hasPurchased });
 
       setCanReview(hasPurchased && !existingReview);
     } catch (err) {
+      console.error("checkCanReview error:", err);
       setCanReview(false);
     }
   };
@@ -256,16 +262,30 @@ export default function ProductDetail() {
 
     setSubmittingReview(true);
     try {
-      const { error } = await supabase.from("reviews").insert({
-        user_id: user.id,
-        product_id: product.id,
-        rating: reviewRating,
-        title: reviewTitle.trim() || null,
-        comment: reviewComment.trim(),
-        is_approved: false, // Admin onayı bekleyecek
+      // RPC fonksiyonunu dene, yoksa direkt insert yap
+      const { error: rpcError } = await supabase.rpc("create_review", {
+        p_product_id: product.id,
+        p_rating: reviewRating,
+        p_title: reviewTitle.trim() || null,
+        p_comment: reviewComment.trim(),
       });
 
-      if (error) throw error;
+      if (rpcError) {
+        // RPC yoksa veya hata varsa, direkt insert dene
+        if (rpcError.code === "PGRST202") {
+          const { error: insertError } = await supabase.from("reviews").insert({
+            user_id: user.id,
+            product_id: product.id,
+            rating: reviewRating,
+            title: reviewTitle.trim() || null,
+            comment: reviewComment.trim(),
+            is_approved: false,
+          });
+          if (insertError) throw insertError;
+        } else {
+          throw rpcError;
+        }
+      }
 
       toast.success("Yorumunuz gönderildi! Admin onayından sonra yayınlanacaktır.");
       setShowReviewForm(false);

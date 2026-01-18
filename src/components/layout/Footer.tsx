@@ -82,9 +82,9 @@ export function Footer() {
                 </a>
               </li>
               <li>
-                <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-                  İletişim
-                </a>
+                <Link to="/contact" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                  Destek
+                </Link>
               </li>
             </ul>
           </div>
