@@ -24,6 +24,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
+import { sendOrderStatusSms } from "@/lib/sms";
+import { sendOrderStatusEmail } from "@/lib/email";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getProductImage, ORDER_STATUS_CONFIG, ORDER_STATUS_FLOW, type OrderStatus } from "@/lib/helpers";
@@ -253,6 +255,39 @@ export default function AdminOrders() {
         .eq("id", orderId);
 
       if (error) throw error;
+
+      // Siparişi bul ve SMS gönder
+      const order = orders.find(o => o.id === orderId);
+      if (order) {
+        // Kullanıcının telefonunu al
+        const { data: profile } = await supabase
+          .from("user_profiles")
+          .select("phone")
+          .eq("id", order.user_id)
+          .single();
+        
+        if (profile?.phone) {
+          sendOrderStatusSms(profile.phone, order.order_number, newStatus, trackingNumber)
+            .then(result => {
+              if (result.success) {
+                console.log("SMS gönderildi:", order.order_number);
+              }
+            })
+            .catch(console.error);
+        }
+
+        // Email bildirimi gönder
+        const { data: userProfile } = await supabase
+          .from("user_profiles")
+          .select("email")
+          .eq("id", order.user_id)
+          .single();
+        
+        if (userProfile?.email) {
+          sendOrderStatusEmail(userProfile.email, order.order_number, newStatus, undefined, undefined, trackingNumber)
+            .catch(console.error);
+        }
+      }
 
       setOrders(orders.map(o => 
         o.id === orderId 

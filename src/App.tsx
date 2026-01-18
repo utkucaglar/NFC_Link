@@ -31,6 +31,7 @@ import AdminDiscounts from "./pages/admin/Discounts";
 import AdminSubscriptions from "./pages/admin/Subscriptions";
 import AdminReviews from "./pages/admin/Reviews";
 import AdminSupport from "./pages/admin/Support";
+import AdminSettings from "./pages/admin/Settings";
 
 const App = () => (
   <AuthProvider>
@@ -62,6 +63,7 @@ const App = () => (
             <Route path="/admin/subscriptions" element={<AdminRoute><AdminSubscriptions /></AdminRoute>} />
             <Route path="/admin/reviews" element={<AdminRoute><AdminReviews /></AdminRoute>} />
             <Route path="/admin/support" element={<AdminRoute><AdminSupport /></AdminRoute>} />
+            <Route path="/admin/settings" element={<AdminRoute><AdminSettings /></AdminRoute>} />
             {/* NFC Public Pages */}
             <Route path="/nfc/business/:key" element={<NFCBusinessCard />} />
             <Route path="/nfc/pet/:key" element={<NFCPetId />} />

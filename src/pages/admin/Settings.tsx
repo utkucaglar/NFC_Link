@@ -1,0 +1,651 @@
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Settings,
+  MessageSquare,
+  Mail,
+  Save,
+  Loader2,
+  Send,
+  CheckCircle2,
+  XCircle,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+import { AdminLayout } from "@/components/layout/AdminLayout";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { supabase } from "@/lib/supabase";
+import { sendSms, formatPhoneNumber } from "@/lib/sms";
+import { sendTestEmail } from "@/lib/email";
+import { toast } from "sonner";
+
+interface SmsSettings {
+  provider: "netgsm" | "iletimerkezi";
+  api_key: string;
+  api_secret: string;
+  sender_id: string;
+  is_enabled: boolean;
+}
+
+interface EmailSettings {
+  api_key: string;
+  from_email: string;
+  from_name: string;
+  is_enabled: boolean;
+}
+
+const defaultSmsSettings: SmsSettings = {
+  provider: "netgsm",
+  api_key: "",
+  api_secret: "",
+  sender_id: "ESDODESIGN",
+  is_enabled: false,
+};
+
+const defaultEmailSettings: EmailSettings = {
+  api_key: "",
+  from_email: "noreply@esdodesign.com",
+  from_name: "Esdodesign",
+  is_enabled: false,
+};
+
+export default function AdminSettings() {
+  const [smsSettings, setSmsSettings] = useState<SmsSettings>(defaultSmsSettings);
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(defaultEmailSettings);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [testPhone, setTestPhone] = useState("");
+  const [testMessage, setTestMessage] = useState("Test mesajı - Esdodesign");
+  const [testEmail, setTestEmail] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [showApiSecret, setShowApiSecret] = useState(false);
+  const [showEmailApiKey, setShowEmailApiKey] = useState(false);
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      // SMS ayarları
+      const { data: smsData } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "sms_settings")
+        .single();
+
+      if (smsData) {
+        setSmsSettings(JSON.parse(smsData.value));
+      }
+
+      // Email ayarları
+      const { data: emailData } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "email_settings")
+        .single();
+
+      if (emailData) {
+        setEmailSettings(JSON.parse(emailData.value));
+      }
+    } catch (err) {
+      console.error("Ayarlar yüklenemedi:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert({
+          key: "sms_settings",
+          value: JSON.stringify(smsSettings),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "key" });
+
+      if (error) throw error;
+      toast.success("SMS ayarları kaydedildi");
+    } catch (err) {
+      console.error("Kaydetme hatası:", err);
+      toast.error("Ayarlar kaydedilemedi");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveEmail = async () => {
+    setSavingEmail(true);
+    try {
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert({
+          key: "email_settings",
+          value: JSON.stringify(emailSettings),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "key" });
+
+      if (error) throw error;
+      toast.success("Email ayarları kaydedildi");
+    } catch (err) {
+      console.error("Kaydetme hatası:", err);
+      toast.error("Ayarlar kaydedilemedi");
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  const handleTestEmail = async () => {
+    if (!testEmail.trim()) {
+      toast.error("Test email adresi girin");
+      return;
+    }
+
+    setTestingEmail(true);
+    try {
+      const result = await sendTestEmail(testEmail);
+      if (result.success) {
+        toast.success("Test emaili gönderildi!");
+      } else {
+        toast.error(`Email gönderilemedi: ${result.error}`);
+      }
+    } catch (err: any) {
+      toast.error(`Hata: ${err.message}`);
+    } finally {
+      setTestingEmail(false);
+    }
+  };
+
+  const handleTestSms = async () => {
+    if (!testPhone.trim()) {
+      toast.error("Test telefon numarası girin");
+      return;
+    }
+
+    setTesting(true);
+    try {
+      const result = await sendSms(testPhone, testMessage);
+      if (result.success) {
+        toast.success("Test SMS'i gönderildi!");
+      } else {
+        toast.error(`SMS gönderilemedi: ${result.error}`);
+      }
+    } catch (err: any) {
+      toast.error(`Hata: ${err.message}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  return (
+    <AdminLayout>
+      <div className="space-y-6">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <h1 className="text-3xl font-bold mb-2">
+            <span className="text-gradient">Ayarlar</span>
+          </h1>
+          <p className="text-muted-foreground">
+            Site ve SMS ayarlarını yönetin
+          </p>
+        </motion.div>
+
+        {/* SMS Settings Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <MessageSquare className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">SMS Ayarları</h2>
+              <p className="text-sm text-muted-foreground">
+                Sipariş ve destek bildirimleri için SMS servisi
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Enable/Disable */}
+            <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+              <div>
+                <Label className="font-medium">SMS Servisi</Label>
+                <p className="text-sm text-muted-foreground">
+                  SMS bildirimlerini etkinleştir
+                </p>
+              </div>
+              <Switch
+                checked={smsSettings.is_enabled}
+                onCheckedChange={(checked) =>
+                  setSmsSettings({ ...smsSettings, is_enabled: checked })
+                }
+              />
+            </div>
+
+            {/* Provider Selection */}
+            <div>
+              <Label className="mb-2 block">SMS Sağlayıcısı</Label>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setSmsSettings({ ...smsSettings, provider: "netgsm" })}
+                  className={`flex-1 p-4 rounded-lg border-2 transition-all ${
+                    smsSettings.provider === "netgsm"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/50"
+                  }`}
+                >
+                  <p className="font-semibold">Netgsm</p>
+                  <p className="text-xs text-muted-foreground">Türkiye'de yaygın</p>
+                </button>
+                <button
+                  onClick={() => setSmsSettings({ ...smsSettings, provider: "iletimerkezi" })}
+                  className={`flex-1 p-4 rounded-lg border-2 transition-all ${
+                    smsSettings.provider === "iletimerkezi"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/50"
+                  }`}
+                >
+                  <p className="font-semibold">İletimerkezi</p>
+                  <p className="text-xs text-muted-foreground">Kolay entegrasyon</p>
+                </button>
+              </div>
+            </div>
+
+            {/* API Credentials */}
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="api_key">API Key / Kullanıcı Kodu</Label>
+                <div className="relative mt-1">
+                  <Input
+                    id="api_key"
+                    type={showApiKey ? "text" : "password"}
+                    value={smsSettings.api_key}
+                    onChange={(e) =>
+                      setSmsSettings({ ...smsSettings, api_key: e.target.value })
+                    }
+                    placeholder="API anahtarınız"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="api_secret">API Secret / Şifre</Label>
+                <div className="relative mt-1">
+                  <Input
+                    id="api_secret"
+                    type={showApiSecret ? "text" : "password"}
+                    value={smsSettings.api_secret}
+                    onChange={(e) =>
+                      setSmsSettings({ ...smsSettings, api_secret: e.target.value })
+                    }
+                    placeholder="API şifreniz"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiSecret(!showApiSecret)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showApiSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Sender ID */}
+            <div>
+              <Label htmlFor="sender_id">Gönderici Adı (Sender ID)</Label>
+              <Input
+                id="sender_id"
+                value={smsSettings.sender_id}
+                onChange={(e) =>
+                  setSmsSettings({ ...smsSettings, sender_id: e.target.value.toUpperCase() })
+                }
+                placeholder="ESDODESIGN"
+                className="mt-1 uppercase"
+                maxLength={11}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Maksimum 11 karakter. SMS'lerde görünecek gönderici adı.
+              </p>
+            </div>
+
+            {/* Save Button */}
+            <Button onClick={handleSave} disabled={saving} className="w-full">
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Kaydediliyor...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Ayarları Kaydet
+                </>
+              )}
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Test SMS Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+              <Send className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Test SMS</h2>
+              <p className="text-sm text-muted-foreground">
+                SMS ayarlarını test edin
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="test_phone">Telefon Numarası</Label>
+              <Input
+                id="test_phone"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+                placeholder="5XX XXX XX XX"
+                className="mt-1"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="test_message">Test Mesajı</Label>
+              <Input
+                id="test_message"
+                value={testMessage}
+                onChange={(e) => setTestMessage(e.target.value)}
+                placeholder="Test mesajı"
+                className="mt-1"
+              />
+            </div>
+
+            <Button
+              onClick={handleTestSms}
+              disabled={testing || !smsSettings.is_enabled}
+              variant="outline"
+              className="w-full"
+            >
+              {testing ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Gönderiliyor...
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4 mr-2" />
+                  Test SMS Gönder
+                </>
+              )}
+            </Button>
+
+            {!smsSettings.is_enabled && (
+              <p className="text-sm text-muted-foreground text-center">
+                Test göndermek için SMS servisini etkinleştirin
+              </p>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Email Settings Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+              <Mail className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Email Ayarları</h2>
+              <p className="text-sm text-muted-foreground">
+                Sipariş ve destek bildirimleri için Resend API
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Enable/Disable */}
+            <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+              <div>
+                <Label className="font-medium">Email Servisi</Label>
+                <p className="text-sm text-muted-foreground">
+                  Email bildirimlerini etkinleştir
+                </p>
+              </div>
+              <Switch
+                checked={emailSettings.is_enabled}
+                onCheckedChange={(checked) =>
+                  setEmailSettings({ ...emailSettings, is_enabled: checked })
+                }
+              />
+            </div>
+
+            {/* API Key */}
+            <div>
+              <Label htmlFor="email_api_key">Resend API Key</Label>
+              <div className="relative mt-1">
+                <Input
+                  id="email_api_key"
+                  type={showEmailApiKey ? "text" : "password"}
+                  value={emailSettings.api_key}
+                  onChange={(e) =>
+                    setEmailSettings({ ...emailSettings, api_key: e.target.value })
+                  }
+                  placeholder="re_xxxxxxxxxx"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowEmailApiKey(!showEmailApiKey)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showEmailApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  Resend.com
+                </a>'dan API key alabilirsiniz
+              </p>
+            </div>
+
+            {/* From Settings */}
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="from_name">Gönderici Adı</Label>
+                <Input
+                  id="from_name"
+                  value={emailSettings.from_name}
+                  onChange={(e) =>
+                    setEmailSettings({ ...emailSettings, from_name: e.target.value })
+                  }
+                  placeholder="Esdodesign"
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="from_email">Gönderici Email</Label>
+                <Input
+                  id="from_email"
+                  type="email"
+                  value={emailSettings.from_email}
+                  onChange={(e) =>
+                    setEmailSettings({ ...emailSettings, from_email: e.target.value })
+                  }
+                  placeholder="noreply@esdodesign.com"
+                  className="mt-1"
+                />
+              </div>
+            </div>
+
+            {/* Save Button */}
+            <Button onClick={handleSaveEmail} disabled={savingEmail} className="w-full">
+              {savingEmail ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Kaydediliyor...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Email Ayarlarını Kaydet
+                </>
+              )}
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Test Email Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+              <Send className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Test Email</h2>
+              <p className="text-sm text-muted-foreground">
+                Email ayarlarını test edin
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="test_email">Email Adresi</Label>
+              <Input
+                id="test_email"
+                type="email"
+                value={testEmail}
+                onChange={(e) => setTestEmail(e.target.value)}
+                placeholder="test@example.com"
+                className="mt-1"
+              />
+            </div>
+
+            <Button
+              onClick={handleTestEmail}
+              disabled={testingEmail || !emailSettings.is_enabled}
+              variant="outline"
+              className="w-full"
+            >
+              {testingEmail ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Gönderiliyor...
+                </>
+              ) : (
+                <>
+                  <Mail className="w-4 h-4 mr-2" />
+                  Test Email Gönder
+                </>
+              )}
+            </Button>
+
+            {!emailSettings.is_enabled && (
+              <p className="text-sm text-muted-foreground text-center">
+                Test göndermek için Email servisini etkinleştirin
+              </p>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Usage Info */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="bg-muted/30 rounded-2xl p-6 border border-border/50"
+        >
+          <h3 className="font-semibold mb-4">Bildirim Kullanım Alanları</h3>
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h4 className="font-medium text-sm mb-2 flex items-center gap-2">
+                <MessageSquare className="w-4 h-4" /> SMS Bildirimleri
+              </h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-accent mt-0.5 shrink-0" />
+                  <span>Sipariş onayı</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-accent mt-0.5 shrink-0" />
+                  <span>Kargo bildirimi</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-accent mt-0.5 shrink-0" />
+                  <span>Destek yanıtı</span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-medium text-sm mb-2 flex items-center gap-2">
+                <Mail className="w-4 h-4" /> Email Bildirimleri
+              </h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                  <span>Sipariş detaylı email</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                  <span>Kargo takip emaili</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                  <span>Destek sohbeti</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    </AdminLayout>
+  );
+}

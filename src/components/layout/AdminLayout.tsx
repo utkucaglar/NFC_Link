@@ -34,6 +34,7 @@ const menuItems = [
   { name: "İndirimler", path: "/admin/discounts", icon: Tag },
   { name: "Değerlendirmeler", path: "/admin/reviews", icon: Star },
   { name: "Destek", path: "/admin/support", icon: MessageSquare },
+  { name: "Ayarlar", path: "/admin/settings", icon: Settings },
 ];
 
 export function AdminLayout({ children }: AdminLayoutProps) {

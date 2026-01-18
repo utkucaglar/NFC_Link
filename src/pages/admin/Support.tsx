@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase";
+import { sendSupportSms } from "@/lib/sms";
+import { sendSupportEmail } from "@/lib/email";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -220,6 +222,32 @@ export default function AdminSupport() {
 
       if (error) throw error;
 
+      // Müşteriye SMS gönder
+      if (selectedTicket.user_id) {
+        const { data: profile } = await supabase
+          .from("user_profiles")
+          .select("phone")
+          .eq("id", selectedTicket.user_id)
+          .single();
+        
+        if (profile?.phone) {
+          sendSupportSms(profile.phone, selectedTicket.ticket_number, "reply")
+            .catch(console.error);
+        }
+
+        // Email bildirimi gönder
+        const { data: userProfile } = await supabase
+          .from("user_profiles")
+          .select("email")
+          .eq("id", selectedTicket.user_id)
+          .single();
+        
+        if (userProfile?.email) {
+          sendSupportEmail(userProfile.email, selectedTicket.ticket_number, "reply", replyMessage.trim())
+            .catch(console.error);
+        }
+      }
+
       setReplyMessage("");
       fetchMessages(selectedTicket.id);
       fetchTickets();
@@ -247,6 +275,34 @@ export default function AdminSupport() {
         .eq("id", selectedTicket.id);
 
       if (error) throw error;
+
+      // Çözüldü durumunda SMS gönder
+      if (status === "resolved" || status === "closed") {
+        if (selectedTicket.user_id) {
+          const { data: profile } = await supabase
+            .from("user_profiles")
+            .select("phone")
+            .eq("id", selectedTicket.user_id)
+            .single();
+          
+          if (profile?.phone) {
+            sendSupportSms(profile.phone, selectedTicket.ticket_number, "resolved")
+              .catch(console.error);
+          }
+
+          // Email bildirimi gönder
+          const { data: userProfile } = await supabase
+            .from("user_profiles")
+            .select("email")
+            .eq("id", selectedTicket.user_id)
+            .single();
+          
+          if (userProfile?.email) {
+            sendSupportEmail(userProfile.email, selectedTicket.ticket_number, "resolved")
+              .catch(console.error);
+          }
+        }
+      }
 
       setSelectedTicket({ ...selectedTicket, status });
       fetchTickets();

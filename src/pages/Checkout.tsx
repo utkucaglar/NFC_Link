@@ -24,6 +24,8 @@ import { Label } from "@/components/ui/label";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { sendOrderStatusSms } from "@/lib/sms";
+import { sendOrderStatusEmail } from "@/lib/email";
 import { toast } from "sonner";
 
 // Türkiye illeri
@@ -340,6 +342,22 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       }
       
       toast.success(`Siparişiniz alındı! Sipariş No: ${orderNumber}`);
+      
+      // SMS bildirimi gönder (arka planda)
+      if (formData.phone) {
+        sendOrderStatusSms(formData.phone, orderNumber, "confirmed").catch(console.error);
+      }
+
+      // Email bildirimi gönder (arka planda)
+      if (user?.email) {
+        const orderItems = cartItems.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+        }));
+        sendOrderStatusEmail(user.email, orderNumber, "confirmed", orderItems, total).catch(console.error);
+      }
+      
       clearCart();
       localStorage.removeItem("appliedDiscount");
       navigate("/orders");
