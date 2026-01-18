@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Package, Truck, CheckCircle2, Clock, CircleDot, X, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { Package, Truck, CheckCircle2, Clock, CircleDot, X, ChevronDown, ChevronUp, ExternalLink, Star, MessageSquare } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -260,6 +260,23 @@ export default function Orders() {
                                         <div className="mt-3 p-3 bg-primary/5 rounded-lg border border-primary/20">
                                           <p className="text-sm font-medium text-primary mb-1">Üretim Notu</p>
                                           <p className="text-sm">{item.admin_notes}</p>
+                                        </div>
+                                      )}
+
+                                      {/* Review Button - for delivered/shipped orders */}
+                                      {(order.status === 'delivered' || order.status === 'shipped' || order.status === 'confirmed') && (
+                                        <div className="mt-3 pt-3 border-t border-border">
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              navigate(`/product/${item.product_id}#reviews`);
+                                            }}
+                                          >
+                                            <Star className="w-4 h-4 mr-1" />
+                                            Değerlendir
+                                          </Button>
                                         </div>
                                       )}
                                     </div>

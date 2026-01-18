@@ -14,6 +14,7 @@ import {
   Wifi,
   Home,
   CreditCard,
+  Star,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ const menuItems = [
   { name: "Ürünler", path: "/admin/products", icon: Package },
   { name: "Abonelikler", path: "/admin/subscriptions", icon: CreditCard },
   { name: "İndirimler", path: "/admin/discounts", icon: Tag },
+  { name: "Değerlendirmeler", path: "/admin/reviews", icon: Star },
 ];
 
 export function AdminLayout({ children }: AdminLayoutProps) {

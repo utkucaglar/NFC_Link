@@ -1,11 +1,15 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2, ChevronRight, X } from "lucide-react";
+import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2, ChevronRight, X, Star, MessageSquare, User, ThumbsUp, Send } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useCart } from "@/contexts/CartContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
 import { 
   getProductImage, 
   formatPrice,
@@ -44,6 +48,24 @@ interface Product {
   nfc_type: NFCType;
 }
 
+interface Review {
+  id: string;
+  user_id: string;
+  product_id: string;
+  rating: number;
+  title: string | null;
+  comment: string;
+  is_approved: boolean;
+  admin_response: string | null;
+  admin_response_at: string | null;
+  helpful_count: number;
+  created_at: string;
+  user_profiles?: {
+    first_name: string | null;
+    last_name: string | null;
+  };
+}
+
 // Kategori bazlı NFC tipi belirleme (veritabanında nfc_type yoksa fallback)
 const getNfcTypeFromCategory = (category: string): NFCType => {
   const cat = category?.toLowerCase() || "";
@@ -57,6 +79,7 @@ export default function ProductDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addToCart } = useCart();
+  const { user, isAuthenticated } = useAuth();
   const [quantity, setQuantity] = useState(1);
   const [selectedColor, setSelectedColor] = useState(0);
   const [product, setProduct] = useState<Product | null>(null);
@@ -70,6 +93,19 @@ export default function ProductDetail() {
   const [petIdData, setPetIdData] = useState<PetIdData>(defaultPetIdData);
   const [redirectData, setRedirectData] = useState<RedirectData>(defaultRedirectData);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+
+  // Reviews state
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [averageRating, setAverageRating] = useState(0);
+  const [reviewCount, setReviewCount] = useState(0);
+  const [canReview, setCanReview] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewTitle, setReviewTitle] = useState("");
+  const [reviewComment, setReviewComment] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [userReview, setUserReview] = useState<Review | null>(null);
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -124,6 +160,155 @@ export default function ProductDetail() {
     // Sayfa değiştiğinde scroll'u sıfırla
     window.scrollTo(0, 0);
   }, [id]);
+
+  // Yorumları yükle
+  useEffect(() => {
+    if (product?.id) {
+      fetchReviews();
+      checkCanReview();
+    }
+  }, [product?.id, user]);
+
+  const fetchReviews = async () => {
+    if (!product?.id) return;
+    
+    setReviewsLoading(true);
+    try {
+      // Onaylı yorumları getir
+      const { data, error } = await supabase
+        .from("reviews")
+        .select(`
+          *,
+          user_profiles:user_id (first_name, last_name)
+        `)
+        .eq("product_id", product.id)
+        .eq("is_approved", true)
+        .eq("is_visible", true)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setReviews(data || []);
+
+      // Ortalama puan hesapla
+      if (data && data.length > 0) {
+        const avg = data.reduce((sum, r) => sum + r.rating, 0) / data.length;
+        setAverageRating(Math.round(avg * 10) / 10);
+        setReviewCount(data.length);
+      }
+
+      // Kullanıcının kendi yorumunu kontrol et
+      if (user) {
+        const { data: userReviewData } = await supabase
+          .from("reviews")
+          .select("*")
+          .eq("product_id", product.id)
+          .eq("user_id", user.id)
+          .single();
+        
+        setUserReview(userReviewData);
+      }
+    } catch (err) {
+      console.error("Yorumlar yüklenemedi:", err);
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
+
+  const checkCanReview = async () => {
+    if (!user || !product?.id) {
+      setCanReview(false);
+      return;
+    }
+
+    try {
+      // Kullanıcı bu ürünü satın almış mı?
+      const { data: orderData } = await supabase
+        .from("order_items")
+        .select(`
+          id,
+          orders!inner (user_id, status)
+        `)
+        .eq("product_id", product.id)
+        .eq("orders.user_id", user.id)
+        .in("orders.status", ["delivered", "shipped", "confirmed"]);
+
+      const hasPurchased = orderData && orderData.length > 0;
+
+      // Daha önce yorum yapmış mı?
+      const { data: existingReview } = await supabase
+        .from("reviews")
+        .select("id")
+        .eq("product_id", product.id)
+        .eq("user_id", user.id)
+        .single();
+
+      setCanReview(hasPurchased && !existingReview);
+    } catch (err) {
+      setCanReview(false);
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    if (!user || !product?.id || !reviewComment.trim()) {
+      toast.error("Lütfen yorum yazınız");
+      return;
+    }
+
+    setSubmittingReview(true);
+    try {
+      const { error } = await supabase.from("reviews").insert({
+        user_id: user.id,
+        product_id: product.id,
+        rating: reviewRating,
+        title: reviewTitle.trim() || null,
+        comment: reviewComment.trim(),
+        is_approved: false, // Admin onayı bekleyecek
+      });
+
+      if (error) throw error;
+
+      toast.success("Yorumunuz gönderildi! Admin onayından sonra yayınlanacaktır.");
+      setShowReviewForm(false);
+      setReviewRating(5);
+      setReviewTitle("");
+      setReviewComment("");
+      setCanReview(false);
+      checkCanReview();
+    } catch (err: any) {
+      console.error("Yorum gönderilemedi:", err);
+      if (err.code === "23505") {
+        toast.error("Bu ürüne zaten yorum yapmışsınız");
+      } else {
+        toast.error("Yorum gönderilemedi");
+      }
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  const renderStars = (rating: number, interactive = false, onSelect?: (r: number) => void) => {
+    return (
+      <div className="flex gap-1">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <button
+            key={star}
+            type="button"
+            disabled={!interactive}
+            onClick={() => interactive && onSelect?.(star)}
+            className={`${interactive ? "cursor-pointer hover:scale-110 transition-transform" : "cursor-default"}`}
+          >
+            <Star
+              className={`w-5 h-5 ${
+                star <= rating
+                  ? "fill-yellow-400 text-yellow-400"
+                  : "fill-muted text-muted-foreground"
+              }`}
+            />
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -431,12 +616,183 @@ export default function ProductDetail() {
             </motion.div>
           </div>
 
+          {/* Reviews Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="mb-16"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-bold">Değerlendirmeler</h2>
+                {reviewCount > 0 && (
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
+                      <span className="font-semibold">{averageRating}</span>
+                    </div>
+                    <span className="text-muted-foreground">({reviewCount} değerlendirme)</span>
+                  </div>
+                )}
+              </div>
+              {canReview && !showReviewForm && (
+                <Button onClick={() => setShowReviewForm(true)}>
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Yorum Yaz
+                </Button>
+              )}
+            </div>
+
+            {/* Review Form */}
+            {showReviewForm && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                className="bg-card rounded-2xl p-6 border border-border/50 mb-6"
+              >
+                <h3 className="font-semibold mb-4">Değerlendirmenizi Yazın</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <Label className="mb-2 block">Puanınız</Label>
+                    {renderStars(reviewRating, true, setReviewRating)}
+                  </div>
+
+                  <div>
+                    <Label htmlFor="reviewTitle">Başlık (Opsiyonel)</Label>
+                    <Input
+                      id="reviewTitle"
+                      value={reviewTitle}
+                      onChange={(e) => setReviewTitle(e.target.value)}
+                      placeholder="Kısa bir başlık yazın..."
+                      className="mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="reviewComment">Yorumunuz *</Label>
+                    <textarea
+                      id="reviewComment"
+                      value={reviewComment}
+                      onChange={(e) => setReviewComment(e.target.value)}
+                      placeholder="Ürün hakkında deneyimlerinizi paylaşın..."
+                      className="w-full mt-1 px-4 py-3 rounded-lg border border-input bg-background min-h-[120px] focus:outline-none focus:ring-2 focus:ring-ring"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setShowReviewForm(false);
+                        setReviewRating(5);
+                        setReviewTitle("");
+                        setReviewComment("");
+                      }}
+                    >
+                      İptal
+                    </Button>
+                    <Button
+                      onClick={handleSubmitReview}
+                      disabled={submittingReview || !reviewComment.trim()}
+                    >
+                      {submittingReview ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Gönderiliyor...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4 mr-2" />
+                          Gönder
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* User's pending review notice */}
+            {userReview && !userReview.is_approved && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6">
+                <p className="text-amber-600 text-sm">
+                  Yorumunuz admin onayı bekliyor. Onaylandıktan sonra burada görünecektir.
+                </p>
+              </div>
+            )}
+
+            {/* Reviews List */}
+            {reviewsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              </div>
+            ) : reviews.length > 0 ? (
+              <div className="space-y-4">
+                {reviews.map((review) => (
+                  <div
+                    key={review.id}
+                    className="bg-card rounded-2xl p-6 border border-border/50"
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <User className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-medium">
+                            {review.user_profiles?.first_name || "Anonim"}{" "}
+                            {review.user_profiles?.last_name?.charAt(0) || ""}.
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(review.created_at).toLocaleDateString("tr-TR")}
+                          </p>
+                        </div>
+                      </div>
+                      {renderStars(review.rating)}
+                    </div>
+
+                    {review.title && (
+                      <h4 className="font-semibold mb-2">{review.title}</h4>
+                    )}
+                    <p className="text-muted-foreground">{review.comment}</p>
+
+                    {/* Admin Response */}
+                    {review.admin_response && (
+                      <div className="mt-4 pl-4 border-l-2 border-primary/30 bg-primary/5 rounded-r-lg p-3">
+                        <p className="text-xs font-medium text-primary mb-1">Esdodesign Yanıtı</p>
+                        <p className="text-sm text-muted-foreground">{review.admin_response}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 bg-muted/30 rounded-2xl">
+                <MessageSquare className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <p className="text-muted-foreground">Henüz değerlendirme yok</p>
+                {isAuthenticated() && !canReview && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Yorum yapabilmek için bu ürünü satın almanız gerekmektedir.
+                  </p>
+                )}
+                {!isAuthenticated() && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    <Link to="/login" className="text-primary hover:underline">Giriş yapın</Link> ve ürünü satın alarak yorum yapabilirsiniz.
+                  </p>
+                )}
+              </div>
+            )}
+          </motion.div>
+
           {/* Related Products */}
           {relatedProducts.length > 0 && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
+              transition={{ delay: 0.5 }}
             >
               <h2 className="text-2xl font-bold mb-6">Benzer Ürünler</h2>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
