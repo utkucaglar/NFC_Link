@@ -180,9 +180,13 @@ export default function AdminDiscounts() {
       setDiscounts(discounts.filter(d => d.id !== discountId));
       toast.success("İndirim silindi");
       setDeleteConfirm(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Silme hatası:", error);
-      toast.error("İndirim silinemedi");
+      const errorMessage = error?.message || "İndirim silinemedi";
+      toast.error(errorMessage.includes("foreign key") 
+        ? "Bu indirim kullanılmış siparişlerde bulunduğu için silinemiyor. Lütfen veritabanı migration'ını çalıştırın."
+        : errorMessage
+      );
     }
   };
 

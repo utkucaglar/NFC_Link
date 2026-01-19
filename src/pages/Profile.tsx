@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { User, Mail, Phone, MapPin, CreditCard, Bell, Shield, LogOut, Plus, Edit, Trash2, Loader2 } from "lucide-react";
+import { User, Mail, Phone, MapPin, CreditCard, Bell, Shield, LogOut, Plus, Edit, Trash2, Loader2, Star } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { ShippingAddress } from "@/lib/supabase";
+import { supabase, ShippingAddress } from "@/lib/supabase";
 import {
   Dialog,
   DialogContent,
@@ -119,26 +119,19 @@ export default function Profile() {
     
     setLoadingAddresses(true);
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const { data, error } = await supabase
+        .from('shipping_addresses')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true) // Sadece aktif adresleri getir
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false });
 
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/shipping_addresses?user_id=eq.${user.id}&select=*&order=is_default.desc,created_at.desc`,
-        {
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setAddresses(data || []);
-      }
+      if (error) throw error;
+      setAddresses(data || []);
     } catch (error) {
       console.error('Error fetching addresses:', error);
+      toast.error('Adresler yüklenemedi');
     } finally {
       setLoadingAddresses(false);
     }
@@ -217,6 +210,15 @@ export default function Profile() {
       return;
     }
 
+    // Phone validation - if phone is provided, it must be valid
+    if (phone.trim()) {
+      const phoneNumber = phone.trim().replace(/\s/g, '');
+      if (!/^0[0-9]{10}$/.test(phoneNumber)) {
+        toast.error("Telefon numarası 0 ile başlamalı ve 11 haneli olmalıdır (örn: 05XXXXXXXXX)");
+        return;
+      }
+    }
+
     if (savingProfile) {
       console.warn('Already saving, ignoring duplicate call');
       return;
@@ -226,10 +228,13 @@ export default function Profile() {
     console.log('Starting profile update...');
 
     try {
+      // Clean phone number (remove spaces)
+      const cleanedPhone = phone.trim() ? phone.trim().replace(/\s/g, '') : null;
+      
       const updateData = {
         first_name: firstName.trim(),
         last_name: lastName.trim(),
-        phone: phone.trim() || null,
+        phone: cleanedPhone,
         full_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
       };
       
@@ -288,42 +293,66 @@ export default function Profile() {
   const handleSaveAddress = async () => {
     if (!user) return;
 
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    // Validation
+    if (!addressForm.first_name.trim() || !addressForm.last_name.trim()) {
+      toast.error("İsim ve soyisim gereklidir");
+      return;
+    }
+    if (!addressForm.phone.trim()) {
+      toast.error("Telefon numarası gereklidir");
+      return;
+    }
+    const phoneNumber = addressForm.phone.replace(/\s/g, '');
+    if (!/^0[0-9]{10}$/.test(phoneNumber)) {
+      toast.error("Telefon numarası 0 ile başlamalı ve 11 haneli olmalıdır (örn: 05XXXXXXXXX)");
+      return;
+    }
+    if (!addressForm.address_line1.trim()) {
+      toast.error("Adres gereklidir");
+      return;
+    }
+    if (!addressForm.city.trim()) {
+      toast.error("İl gereklidir");
+      return;
+    }
+    if (!addressForm.postal_code.trim()) {
+      toast.error("Posta kodu gereklidir");
+      return;
+    }
 
+    try {
       const addressData = {
         ...addressForm,
         user_id: user.id,
         is_default: addresses.length === 0, // İlk adres ise default olsun
+        is_active: true, // Yeni eklenen adresler aktif olmalı
       };
 
-      const url = editingAddress
-        ? `${supabaseUrl}/rest/v1/shipping_addresses?id=eq.${editingAddress.id}`
-        : `${supabaseUrl}/rest/v1/shipping_addresses`;
+      if (editingAddress) {
+        // Update existing address
+        // is_active'i güncelleme verisinden çıkarıyoruz (sadece düzenleme için)
+        const { is_active, ...updateData } = addressData;
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .update(updateData)
+          .eq('id', editingAddress.id);
 
-      const method = editingAddress ? 'PATCH' : 'POST';
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation',
-        },
-        body: JSON.stringify(addressData),
-      });
-
-      if (response.ok) {
-        toast.success(editingAddress ? "Adres güncellendi" : "Adres eklendi");
-        setIsAddAddressOpen(false);
-        setEditingAddress(null);
-        resetAddressForm();
-        fetchAddresses();
+        if (error) throw error;
+        toast.success("Adres güncellendi");
       } else {
-        throw new Error('Adres kaydedilemedi');
+        // Insert new address
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .insert(addressData);
+
+        if (error) throw error;
+        toast.success("Adres eklendi");
       }
+
+      setIsAddAddressOpen(false);
+      setEditingAddress(null);
+      resetAddressForm();
+      fetchAddresses();
     } catch (error: any) {
       console.error('Error saving address:', error);
       toast.error(error.message || "Adres kaydedilemedi");
@@ -331,33 +360,136 @@ export default function Profile() {
   };
 
   const handleDeleteAddress = async (addressId: string) => {
-    if (!confirm("Bu adresi silmek istediğinizden emin misiniz?")) return;
+    if (!user) return;
+    
+    // Adresin siparişlerde kullanılıp kullanılmadığını kontrol et
+    const addressToDelete = addresses.find(addr => addr.id === addressId);
+    const isDefault = addressToDelete?.is_default;
+    
+    // Siparişlerde kullanılıp kullanılmadığını kontrol et
+    const { data: ordersUsingAddress, error: checkError } = await supabase
+      .from('orders')
+      .select('id, order_number')
+      .eq('shipping_address_id', addressId)
+      .limit(1);
+
+    if (checkError) {
+      console.error('Error checking address usage:', checkError);
+    }
+
+    const isUsedInOrders = ordersUsingAddress && ordersUsingAddress.length > 0;
+    
+    const confirmMessage = isUsedInOrders
+      ? "Bu adres siparişlerinizde kullanıldığı için silinemez, ancak gizlenebilir. Gizlemek istiyor musunuz?"
+      : "Bu adresi silmek istediğinizden emin misiniz?";
+    
+    if (!confirm(confirmMessage)) return;
 
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if (isUsedInOrders) {
+        // Siparişlerde kullanılmış adres: Soft delete (gizle, sipariş geçmişi korunur)
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', addressId)
+          .eq('user_id', user.id);
 
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/shipping_addresses?id=eq.${addressId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-          },
+        if (error) {
+          console.error('Soft delete address error:', error);
+          console.error('Error details:', JSON.stringify(error, null, 2));
+          
+          // RLS hatası kontrolü
+          if (error.message?.includes('row-level security') || error.message?.includes('RLS') || error.code === '42501') {
+            const errorMsg = `RLS hatası alındı. Lütfen Supabase SQL Editor'da önce '23_rollback_shipping_addresses_soft_delete.sql' sonra '23_shipping_addresses_soft_delete_proper.sql' dosyalarını çalıştırın. 
+            
+Hata: ${error.message || error.code}`;
+            toast.error(errorMsg, { duration: 10000 });
+            console.error('RLS Policy Error Details:', {
+              message: error.message,
+              code: error.code,
+              details: error.details,
+              hint: error.hint,
+              fullError: error
+            });
+          } else {
+            toast.error(error.message || "Adres gizlenemedi");
+          }
+          return;
         }
-      );
 
-      if (response.ok) {
         toast.success("Adres silindi");
-        fetchAddresses();
       } else {
-        throw new Error('Adres silinemedi');
+        // Siparişlerde kullanılmamış adres: Hard delete (gerçekten sil)
+        // Önce varsayılan adres kontrolü yap
+        if (isDefault) {
+          const remainingAddresses = addresses.filter(addr => addr.id !== addressId);
+          if (remainingAddresses.length > 0) {
+            await supabase
+              .from('shipping_addresses')
+              .update({ is_default: true })
+              .eq('id', remainingAddresses[0].id)
+              .eq('user_id', user.id);
+          }
+        }
+
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .delete()
+          .eq('id', addressId)
+          .eq('user_id', user.id);
+
+        if (error) {
+          console.error('Hard delete address error:', error);
+          console.error('Error details:', JSON.stringify(error, null, 2));
+          
+          // RLS hatası kontrolü
+          if (error.message?.includes('row-level security') || error.message?.includes('RLS') || error.code === '42501') {
+            const errorMsg = `RLS hatası alındı. Lütfen Supabase SQL Editor'da '23_shipping_addresses_soft_delete_proper.sql' dosyasının DELETE politikasını kontrol edin. 
+            
+Hata: ${error.message || error.code}`;
+            toast.error(errorMsg, { duration: 10000 });
+          } else {
+            toast.error(error.message || "Adres silinemedi");
+          }
+          return;
+        }
+
+        toast.success("Adres silindi");
       }
+
+      fetchAddresses();
     } catch (error: any) {
       console.error('Error deleting address:', error);
-      toast.error("Adres silinemedi");
+      const errorMessage = error?.message || "Adres silinemedi";
+      toast.error(errorMessage);
+    }
+  };
+
+  const handleSetDefaultAddress = async (addressId: string) => {
+    if (!user) return;
+
+    try {
+      // Önce tüm adreslerin is_default değerini false yap
+      const { error: updateAllError } = await supabase
+        .from('shipping_addresses')
+        .update({ is_default: false })
+        .eq('user_id', user.id);
+
+      if (updateAllError) throw updateAllError;
+
+      // Sonra seçilen adresi varsayılan yap
+      const { error: updateError } = await supabase
+        .from('shipping_addresses')
+        .update({ is_default: true })
+        .eq('id', addressId);
+
+      if (updateError) throw updateError;
+      
+      toast.success("Varsayılan adres güncellendi");
+      fetchAddresses();
+    } catch (error: any) {
+      console.error('Error setting default address:', error);
+      toast.error("Varsayılan adres ayarlanamadı");
     }
   };
 
@@ -486,15 +618,26 @@ export default function Profile() {
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="phone">Telefon</Label>
-                  <Input 
-                    id="phone" 
-                    type="tel" 
-                    value={phone || ""}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="05XX XXX XX XX"
-                    disabled={!isEditingProfile}
-                    className={!isEditingProfile ? "bg-muted/50 cursor-not-allowed" : ""}
-                  />
+                  <div className="relative">
+                    <Input 
+                      id="phone" 
+                      type="tel" 
+                      value={phone || ""}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="05XXXXXXXXX"
+                      disabled={!isEditingProfile}
+                      className={!isEditingProfile ? "bg-muted/50 cursor-not-allowed" : !phone ? "text-transparent" : ""}
+                      maxLength={11}
+                    />
+                    {!phone && isEditingProfile && (
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
+                        05XXXXXXXXX
+                      </span>
+                    )}
+                  </div>
+                  {isEditingProfile && (
+                    <p className="text-xs text-muted-foreground">0 ile başlayan 11 haneli telefon numarası giriniz</p>
+                  )}
                 </div>
               </div>
 
@@ -591,10 +734,21 @@ export default function Profile() {
                           </p>
                         </div>
                         <div className="flex gap-2">
+                          {!address.is_default && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleSetDefaultAddress(address.id)}
+                              title="Varsayılan yap"
+                            >
+                              <Star className="w-4 h-4 text-muted-foreground" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => handleEditAddress(address)}
+                            title="Düzenle"
                           >
                             <Edit className="w-4 h-4" />
                           </Button>
@@ -603,6 +757,7 @@ export default function Profile() {
                             size="icon"
                             className="text-destructive hover:text-destructive"
                             onClick={() => handleDeleteAddress(address.id)}
+                            title="Sil"
                           >
                             <Trash2 className="w-4 h-4" />
                           </Button>
@@ -838,13 +993,24 @@ export default function Profile() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="addressPhone">Telefon</Label>
-                <Input 
-                  id="addressPhone"
-                  type="tel"
-                  value={addressForm.phone}
-                  onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })}
-                />
+                <Label htmlFor="addressPhone">Telefon *</Label>
+                <div className="relative">
+                  <Input 
+                    id="addressPhone"
+                    type="tel"
+                    placeholder="05XXXXXXXXX"
+                    value={addressForm.phone}
+                    onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })}
+                    maxLength={11}
+                    className={!addressForm.phone ? 'text-transparent' : ''}
+                  />
+                  {!addressForm.phone && (
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
+                      05XXXXXXXXX
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">0 ile başlayan 11 haneli telefon numarası giriniz</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="addressLine1">Adres *</Label>

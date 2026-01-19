@@ -23,10 +23,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { supabase, ShippingAddress } from "@/lib/supabase";
 import { sendOrderStatusSms } from "@/lib/sms";
 import { sendOrderStatusEmail } from "@/lib/email";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 
 // Türkiye illeri
 const cities = [
@@ -95,6 +96,19 @@ export default function Checkout() {
   } | null>(null);
   const [discountError, setDiscountError] = useState("");
 
+  // Saved addresses
+  const [savedAddresses, setSavedAddresses] = useState<ShippingAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [useSavedAddress, setUseSavedAddress] = useState(false);
+  const [loadingAddresses, setLoadingAddresses] = useState(false);
+
+  // Load saved addresses
+  useEffect(() => {
+    if (user) {
+      fetchSavedAddresses();
+    }
+  }, [user]);
+
   // Pre-fill form with user profile data
   useEffect(() => {
     if (profile) {
@@ -106,6 +120,79 @@ export default function Checkout() {
       }));
     }
   }, [profile]);
+
+  // Load default address if available
+  useEffect(() => {
+    if (savedAddresses.length > 0 && !selectedAddressId) {
+      const defaultAddress = savedAddresses.find(addr => addr.is_default);
+      if (defaultAddress) {
+        setSelectedAddressId(defaultAddress.id);
+        setUseSavedAddress(true);
+        loadAddressToForm(defaultAddress);
+      }
+    }
+  }, [savedAddresses]);
+
+  const fetchSavedAddresses = async () => {
+    if (!user) return;
+    
+    setLoadingAddresses(true);
+    try {
+      const { data, error } = await supabase
+        .from('shipping_addresses')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true) // Sadece aktif adresleri getir
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setSavedAddresses(data || []);
+    } catch (error) {
+      console.error('Error fetching addresses:', error);
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+
+  const loadAddressToForm = (address: ShippingAddress) => {
+    setFormData({
+      firstName: address.first_name,
+      lastName: address.last_name,
+      phone: address.phone,
+      addressLine1: address.address_line1,
+      addressLine2: address.address_line2 || "",
+      city: address.city,
+      district: address.district || "",
+      postalCode: address.postal_code,
+      notes: address.notes || ""
+    });
+  };
+
+  const handleSelectAddress = (address: ShippingAddress) => {
+    setSelectedAddressId(address.id);
+    setUseSavedAddress(true);
+    loadAddressToForm(address);
+  };
+
+  const handleUseNewAddress = () => {
+    setUseSavedAddress(false);
+    setSelectedAddressId(null);
+    // Reset form to profile data
+    if (profile) {
+      setFormData({
+        firstName: profile.first_name || "",
+        lastName: profile.last_name || "",
+        phone: profile.phone || "",
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        district: "",
+        postalCode: "",
+        notes: ""
+      });
+    }
+  };
 
   // Load discount from localStorage (if applied in Cart)
   useEffect(() => {
@@ -158,13 +245,21 @@ export default function Checkout() {
   };
 
   const validateShippingForm = () => {
+    // If using saved address, no need to validate form
+    if (useSavedAddress && selectedAddressId) {
+      return true;
+    }
+
     const newErrors: {[key: string]: string} = {};
     
     if (!formData.firstName.trim()) newErrors.firstName = "İsim gereklidir";
     if (!formData.lastName.trim()) newErrors.lastName = "Soyisim gereklidir";
     if (!formData.phone.trim()) newErrors.phone = "Telefon numarası gereklidir";
-    else if (!/^[0-9]{10,11}$/.test(formData.phone.replace(/\s/g, ''))) {
-      newErrors.phone = "Geçerli bir telefon numarası girin (10-11 haneli)";
+    else {
+      const phoneNumber = formData.phone.replace(/\s/g, '');
+      if (!/^0[0-9]{10}$/.test(phoneNumber)) {
+        newErrors.phone = "Telefon numarası 0 ile başlamalı ve 11 haneli olmalıdır (örn: 05XXXXXXXXX)";
+      }
     }
     if (!formData.addressLine1.trim()) newErrors.addressLine1 = "Adres gereklidir";
     if (!formData.city) newErrors.city = "İl seçiniz";
@@ -188,6 +283,12 @@ export default function Checkout() {
     setLoading(true);
     
     try {
+      // Calculate totals
+      const subtotal = cartTotal;
+      const shipping = 0; // Ücretsiz kargo
+      const discountAmount = appliedDiscount?.discountAmount || 0;
+      const total = Math.max(0, subtotal + shipping - discountAmount);
+      
       // TODO: Burada Stripe integration yapılacak
       // 1. Backend'de payment intent oluştur
       // 2. Stripe Checkout'a yönlendir veya Stripe Elements kullan
@@ -206,6 +307,38 @@ ${formData.addressLine1}
 ${formData.addressLine2 ? formData.addressLine2 + '\n' : ''}${formData.district ? formData.district + ', ' : ''}${formData.city} ${formData.postalCode}
 ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
 
+      // Save address to shipping_addresses if not using saved address
+      let savedAddressId: string | null = null;
+      if (!useSavedAddress || !selectedAddressId) {
+        // Save the address used in order
+        const { data: newAddress, error: addressError } = await supabase
+          .from("shipping_addresses")
+          .insert({
+            user_id: user?.id,
+            title: "Sipariş Adresi",
+            first_name: formData.firstName,
+            last_name: formData.lastName,
+            phone: formData.phone,
+            address_line1: formData.addressLine1,
+            address_line2: formData.addressLine2 || null,
+            city: formData.city,
+            district: formData.district || null,
+            postal_code: formData.postalCode,
+            country: "Türkiye",
+            notes: formData.notes || null,
+            is_default: savedAddresses.length === 0, // İlk adres ise default
+            is_active: true, // Yeni eklenen adresler aktif olmalı
+          })
+          .select()
+          .single();
+
+        if (!addressError && newAddress) {
+          savedAddressId = newAddress.id;
+        }
+      } else {
+        savedAddressId = selectedAddressId;
+      }
+
       // Siparişi veritabanına kaydet
       const { data: orderData, error: orderError } = await supabase
         .from("orders")
@@ -213,11 +346,11 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           user_id: user?.id,
           order_number: orderNumber,
           status: "pending",
-          subtotal,
-          discount_id: appliedDiscount?.id || null,
-          discount_amount: discountAmount,
-          total,
+          total: total,
           shipping_address: shippingAddress,
+          shipping_address_id: savedAddressId,
+          phone: formData.phone,
+          notes: formData.notes || null,
         })
         .select()
         .single();
@@ -231,7 +364,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           discount_id: appliedDiscount.id,
           user_id: user.id,
           order_id: orderData.id,
-          discount_amount: discountAmount,
+          discount_amount: appliedDiscount.discountAmount,
         });
 
         // usage_count'u artır
@@ -370,6 +503,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
     }
   };
 
+  // Calculate totals for display
   const subtotal = cartTotal;
   const shipping = 0; // Ücretsiz kargo
   const discountAmount = appliedDiscount?.discountAmount || 0;
@@ -541,7 +675,69 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     Teslimat Adresi
                   </h2>
 
-                  <div className="grid gap-4">
+                  {/* Saved Addresses Selection */}
+                  {savedAddresses.length > 0 && (
+                    <div className="mb-6 space-y-3">
+                      <Label className="text-sm font-medium">Kayıtlı Adreslerim</Label>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {savedAddresses.map((address) => (
+                          <div
+                            key={address.id}
+                            onClick={() => handleSelectAddress(address)}
+                            className={`p-4 border rounded-xl cursor-pointer transition-all ${
+                              selectedAddressId === address.id && useSavedAddress
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-medium text-sm">{address.title}</span>
+                                  {address.is_default && (
+                                    <Badge variant="outline" className="text-xs">
+                                      Varsayılan
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-sm text-foreground">
+                                  {address.first_name} {address.last_name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">{address.phone}</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {address.address_line1}
+                                  {address.address_line2 && `, ${address.address_line2}`}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {address.district && `${address.district}, `}
+                                  {address.city} {address.postal_code}
+                                </p>
+                              </div>
+                              <div className="ml-4">
+                                <input
+                                  type="radio"
+                                  checked={selectedAddressId === address.id && useSavedAddress}
+                                  onChange={() => handleSelectAddress(address)}
+                                  className="w-4 h-4 text-primary"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleUseNewAddress}
+                        className="w-full"
+                      >
+                        Yeni Adres Ekle
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Address Form */}
+                  <div className={`grid gap-4 ${useSavedAddress && savedAddresses.length > 0 ? 'opacity-50 pointer-events-none' : ''}`}>
                     {/* Name Fields */}
                     <div className="grid sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -580,17 +776,24 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     <div className="space-y-2">
                       <Label htmlFor="phone">Telefon Numarası *</Label>
                       <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
                         <Input
                           id="phone"
                           name="phone"
                           type="tel"
-                          placeholder="05XX XXX XX XX"
+                          placeholder="05XXXXXXXXX"
                           value={formData.phone}
                           onChange={handleInputChange}
-                          className={`pl-10 ${errors.phone ? 'border-destructive' : ''}`}
+                          className={`pl-10 ${errors.phone ? 'border-destructive' : ''} ${!formData.phone ? 'text-transparent' : ''}`}
+                          maxLength={11}
                         />
+                        {!formData.phone && (
+                          <span className="absolute left-10 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
+                            05XXXXXXXXX
+                          </span>
+                        )}
                       </div>
+                      <p className="text-xs text-muted-foreground">0 ile başlayan 11 haneli telefon numarası giriniz</p>
                       {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
                     </div>
 
@@ -688,6 +891,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     className="w-full mt-6" 
                     size="lg"
                     onClick={handleContinueToPayment}
+                    disabled={useSavedAddress && !selectedAddressId}
                   >
                     Ödemeye Geç
                     <ChevronRight className="w-4 h-4" />

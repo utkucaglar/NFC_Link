@@ -11,6 +11,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   isAdmin: () => boolean;
   isAuthenticated: () => boolean;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
@@ -26,10 +27,17 @@ const translateAuthError = (message: string): string => {
     "Password should be at least 6 characters": "Şifre en az 6 karakter olmalıdır",
     "Unable to validate email address: invalid format": "Geçersiz e-posta formatı",
     "Email rate limit exceeded": "Çok fazla istek gönderildi. Lütfen bekleyin.",
+    "For security purposes, you can only request this after": "Güvenlik nedeniyle, bu işlemi ancak",
+    "User not found": "Bu e-posta adresi ile kayıtlı kullanıcı bulunamadı",
   };
 
   for (const [eng, tr] of Object.entries(translations)) {
     if (message.toLowerCase().includes(eng.toLowerCase())) {
+      // Sayıyı çıkar ve Türkçe mesaj oluştur (rate limit için)
+      const match = message.match(/(\d+)\s*seconds?/i);
+      if (match && eng.includes("security purposes")) {
+        return `Güvenlik nedeniyle, bu işlemi ancak ${match[1]} saniye sonra yapabilirsiniz`;
+      }
       return tr;
     }
   }
@@ -209,6 +217,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     toast.success("Şifreniz başarıyla değiştirildi");
   };
 
+  const resetPassword = async (email: string) => {
+    const redirectUrl = `${window.location.origin}/reset-password`;
+    
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: redirectUrl,
+    });
+
+    if (error) {
+      const turkishMessage = translateAuthError(error.message);
+      toast.error(turkishMessage);
+      throw error;
+    }
+
+    toast.success("Şifre sıfırlama e-postası gönderildi! Lütfen e-postanızı kontrol edin.");
+  };
+
   const updateProfile = async (data: Partial<UserProfile>) => {
     if (!user) {
       toast.error("Giriş yapmalısınız");
@@ -246,6 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signIn,
         signOut,
         updatePassword,
+        resetPassword,
         isAdmin,
         isAuthenticated,
         updateProfile,

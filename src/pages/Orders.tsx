@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Package, Truck, CheckCircle2, Clock, CircleDot, X, ChevronDown, ChevronUp, ExternalLink, Star, MessageSquare } from "lucide-react";
+import { Package, Truck, CheckCircle2, Clock, CircleDot, X, ChevronDown, ChevronUp, ExternalLink, Star, MessageSquare, MapPin } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -234,8 +234,8 @@ export default function Orders() {
 
                                       {/* Customization Details - Customer's Submission */}
                                       {item.customization && Object.keys(item.customization).length > 0 && (
-                                        <div className="mt-3 p-3 bg-background rounded-lg border border-border">
-                                          <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                                        <div className="mt-3 p-4 bg-muted/30 rounded-xl border border-border">
+                                          <p className="text-sm font-medium mb-3 flex items-center gap-2">
                                             Kişiselleştirme Bilgileriniz
                                             {item.customization_confirmed && (
                                               <Badge className="bg-accent/10 text-accent border-accent/20 text-xs">
@@ -244,13 +244,54 @@ export default function Orders() {
                                               </Badge>
                                             )}
                                           </p>
-                                          <div className="space-y-1 text-sm">
-                                            {Object.entries(item.customization).map(([key, value]) => (
-                                              <p key={key}>
-                                                <span className="text-muted-foreground capitalize">{key}:</span>{" "}
-                                                {typeof value === 'string' ? value : JSON.stringify(value)}
-                                              </p>
-                                            ))}
+                                          <div className="space-y-2 text-sm">
+                                            {Object.entries(item.customization)
+                                              .filter(([key, value]) => {
+                                                // Boş değerleri ve gereksiz alanları filtrele
+                                                if (!value || value === '' || value === null) return false;
+                                                if (key === 'nfcType' || key === 'type' || key === 'SubscriptionFee') return false;
+                                                return true;
+                                              })
+                                              .map(([key, value]) => {
+                                                // Türkçe etiket mapping
+                                                const labelMap: Record<string, string> = {
+                                                  name: 'İsim',
+                                                  title: 'Ünvan',
+                                                  company: 'Şirket',
+                                                  phone: 'Telefon',
+                                                  email: 'E-posta',
+                                                  bio: 'Hakkında',
+                                                  linkedin: 'LinkedIn',
+                                                  instagram: 'Instagram',
+                                                  website: 'Web Sitesi',
+                                                  theme: 'Tema',
+                                                  renk: 'Renk',
+                                                  color: 'Renk',
+                                                  petName: 'Evcil Hayvan Adı',
+                                                  petImage: 'Evcil Hayvan Fotoğrafı',
+                                                  petMessage: 'Mesaj',
+                                                  ownerName: 'Sahip Adı',
+                                                  ownerPhone: 'Sahip Telefonu',
+                                                  address: 'Adres',
+                                                  healthNotes: 'Sağlık Notları',
+                                                  microchipNumber: 'Çip Numarası',
+                                                  partnerName1: 'Partner 1 Adı',
+                                                  partnerName2: 'Partner 2 Adı',
+                                                  relationshipStartDate: 'İlişki Başlangıç Tarihi',
+                                                  backgroundImage: 'Arka Plan Görseli',
+                                                  subtitle: 'Alt Başlık',
+                                                };
+                                                
+                                                const label = labelMap[key] || key;
+                                                const displayValue = typeof value === 'string' ? value : JSON.stringify(value);
+                                                
+                                                return (
+                                                  <p key={key} className="flex items-start gap-2">
+                                                    <span className="text-muted-foreground font-medium min-w-[120px]">{label}:</span>
+                                                    <span className="text-foreground flex-1">{displayValue}</span>
+                                                  </p>
+                                                );
+                                              })}
                                           </div>
                                         </div>
                                       )}
@@ -285,6 +326,147 @@ export default function Orders() {
                               ))}
                             </div>
                           </div>
+
+                          {/* Shipping Address */}
+                          {order.shipping_address && (() => {
+                            // Adres formatı: İsim Soyisim\nTelefon\nAdres1\nAdres2 (opsiyonel)\nİlçe, İl PostaKodu\nNot: ... (opsiyonel)
+                            const addressLines = order.shipping_address.split('\n').filter(line => line.trim());
+                            
+                            let name = '';
+                            let phone = '';
+                            let addressLine1 = '';
+                            let addressLine2 = '';
+                            let district = '';
+                            let city = '';
+                            let postalCode = '';
+                            let notes = '';
+                            
+                            // İlk satır: İsim Soyisim
+                            if (addressLines.length > 0) {
+                              name = addressLines[0].trim();
+                            }
+                            
+                            // İkinci satır: Telefon (0 ile başlayan 11 haneli)
+                            if (addressLines.length > 1) {
+                              const line = addressLines[1].trim();
+                              if (line.match(/^0\d{10}$/)) {
+                                phone = line;
+                              }
+                            }
+                            
+                            // Üçüncü satır: Adres1
+                            if (addressLines.length > 2) {
+                              addressLine1 = addressLines[2].trim();
+                            }
+                            
+                            // Dördüncü satır: Adres2 veya İlçe, İl PostaKodu
+                            let cityLineIndex = -1;
+                            if (addressLines.length > 3) {
+                              const line = addressLines[3].trim();
+                              // Eğer virgül veya posta kodu içeriyorsa şehir bilgisi
+                              if (line.includes(',') || /\d{5}/.test(line)) {
+                                cityLineIndex = 3;
+                              } else {
+                                addressLine2 = line;
+                              }
+                            }
+                            
+                            // Beşinci satır: İlçe, İl PostaKodu (eğer adres2 varsa)
+                            if (addressLines.length > 4 && addressLine2) {
+                              cityLineIndex = 4;
+                            }
+                            
+                            // Şehir bilgisini parse et: "İlçe, İl PostaKodu" formatı
+                            if (cityLineIndex !== -1 && addressLines[cityLineIndex]) {
+                              const cityLine = addressLines[cityLineIndex].trim();
+                              // Posta kodu bul (5 haneli sayı)
+                              const postalMatch = cityLine.match(/(\d{5})/);
+                              if (postalMatch) {
+                                postalCode = postalMatch[1];
+                              }
+                              
+                              // İlçe ve İl bilgisini ayır
+                              const cityPart = cityLine.replace(/\d{5}/, '').trim();
+                              if (cityPart.includes(',')) {
+                                const parts = cityPart.split(',').map(p => p.trim());
+                                if (parts.length >= 2) {
+                                  district = parts[0];
+                                  city = parts.slice(1).join(', '); // Birden fazla virgül varsa
+                                } else {
+                                  city = cityPart;
+                                }
+                              } else {
+                                city = cityPart;
+                              }
+                            }
+                            
+                            // Not satırını bul
+                            const notesIndex = addressLines.findIndex(line => line.trim().startsWith('Not:'));
+                            if (notesIndex !== -1) {
+                              notes = addressLines[notesIndex].replace('Not:', '').trim();
+                            }
+                            
+                            return (
+                              <div className="p-4 bg-muted/30 rounded-xl border border-border">
+                                <div className="flex items-start gap-3">
+                                  <MapPin className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+                                  <div className="flex-1">
+                                    <p className="text-sm font-medium mb-3">Teslimat Adresi</p>
+                                    <div className="space-y-2 text-sm">
+                                      {name && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">Teslim Alacak Kişi:</span>
+                                          <span className="text-foreground flex-1">{name}</span>
+                                        </p>
+                                      )}
+                                      {phone && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">Telefon No:</span>
+                                          <span className="text-foreground flex-1">{phone}</span>
+                                        </p>
+                                      )}
+                                      {addressLine1 && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">Adres:</span>
+                                          <span className="text-foreground flex-1">{addressLine1}</span>
+                                        </p>
+                                      )}
+                                      {addressLine2 && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">Adres Detayı:</span>
+                                          <span className="text-foreground flex-1">{addressLine2}</span>
+                                        </p>
+                                      )}
+                                      {district && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">İlçe:</span>
+                                          <span className="text-foreground flex-1">{district}</span>
+                                        </p>
+                                      )}
+                                      {city && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">İl:</span>
+                                          <span className="text-foreground flex-1">{city}</span>
+                                        </p>
+                                      )}
+                                      {postalCode && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">Posta Kodu:</span>
+                                          <span className="text-foreground flex-1">{postalCode}</span>
+                                        </p>
+                                      )}
+                                      {notes && (
+                                        <p className="flex items-start gap-2">
+                                          <span className="text-muted-foreground font-medium min-w-[140px]">Kurye Notu:</span>
+                                          <span className="text-foreground flex-1">{notes}</span>
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
 
                           {/* Tracking Info */}
                           {order.tracking_number && (order.status === 'shipped' || order.status === 'delivered') && (

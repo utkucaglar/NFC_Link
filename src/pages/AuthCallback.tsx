@@ -18,10 +18,19 @@ export default function AuthCallback() {
         
         const error = hashParams.get('error') || queryParams.get('error');
         const errorDescription = hashParams.get('error_description') || queryParams.get('error_description');
+        const type = hashParams.get('type');
 
         if (error) {
           setStatus('error');
           setMessage(errorDescription || error);
+          return;
+        }
+
+        // Check if this is a password recovery callback
+        if (type === 'recovery') {
+          // Redirect to reset password page with hash preserved
+          const hash = window.location.hash;
+          navigate(`/reset-password${hash}`, { replace: true });
           return;
         }
 
@@ -48,6 +57,14 @@ export default function AuthCallback() {
           // No session yet, might still be processing
           // Listen for auth state change
           const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'PASSWORD_RECOVERY') {
+              // Redirect to reset password page with hash preserved
+              const hash = window.location.hash;
+              navigate(`/reset-password${hash}`, { replace: true });
+              subscription.unsubscribe();
+              return;
+            }
+            
             if (event === 'SIGNED_IN' && session) {
               setStatus('success');
               setMessage('E-postanız doğrulandı! Yönlendiriliyorsunuz...');

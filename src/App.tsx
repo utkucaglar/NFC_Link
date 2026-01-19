@@ -18,6 +18,7 @@ import Profile from "./pages/Profile";
 import RenewSubscription from "./pages/RenewSubscription";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
+import ResetPassword from "./pages/ResetPassword";
 import NFCBusinessCard from "./pages/nfc/BusinessCard";
 import NFCPetId from "./pages/nfc/PetId";
 import NFCRedirect from "./pages/nfc/Redirect";
@@ -49,6 +50,7 @@ const App = () => (
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/contact" element={<Contact />} />
             {/* Protected Routes - Temporarily without ProtectedRoute wrapper */}
             <Route path="/my-nfc" element={<MyNFC />} />
