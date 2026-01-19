@@ -42,7 +42,6 @@ Supabase'i tamamen sıfırlamak için **SQL Editor**'da sırayla çalıştır:
 8. 08_admin_discounts.sql     → Admin ve indirim tabloları
 9. 09_admin_policies.sql      → Admin RLS politikaları
 10. 10_product_details.sql    → Kategoriler tablosu ve ürün detayları
-11. 21_product_images_storage.sql → Ürün görselleri için storage bucket (opsiyonel)
 ```
 
 ---
@@ -97,21 +96,6 @@ Admin paneline erişim için kullanıcının `role = 'admin'` olması gerekir.
 - `admin_update_order_status()` - Sipariş durumunu günceller
 - `admin_confirm_customization()` - Kişiselleştirmeyi onaylar
 - `validate_discount_code()` - İndirim kodunu doğrular
-
----
-
----
-
-## 📸 Storage Bucket (Ürün Görselleri)
-
-Admin panelinde ürün görsellerini dosya olarak yüklemek için storage bucket'ı oluşturun:
-
-1. **Supabase Dashboard** → **SQL Editor**'a gidin
-2. `21_product_images_storage.sql` dosyasını çalıştırın
-3. Veya manuel olarak:
-   - **Storage** → **New bucket** → `product-images` (public: true)
-
-Bucket oluşturulduktan sonra admin panelinde "Dosya Yükle" seçeneği çalışacaktır.
 
 ---
 
