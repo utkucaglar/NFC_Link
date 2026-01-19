@@ -145,14 +145,30 @@ CREATE POLICY "Admins can update messages"
 -- Helper Functions
 -- =================================================
 
--- Ticket numarası oluştur
+-- Ticket numarası için sequence oluştur
+CREATE SEQUENCE IF NOT EXISTS ticket_number_seq START 1;
+
+-- Eğer mevcut ticketlar varsa, sequence'i mevcut ticket sayısına göre ayarla
+DO $$
+DECLARE
+  ticket_count INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO ticket_count FROM support_tickets;
+  IF ticket_count > 0 THEN
+    -- Mevcut ticket sayısından sonraki sayıdan başlat
+    PERFORM setval('ticket_number_seq', ticket_count + 1, false);
+  END IF;
+END $$;
+
+-- Ticket numarası oluştur (race condition'ı önlemek için sequence kullan)
 CREATE OR REPLACE FUNCTION generate_ticket_number()
 RETURNS TEXT AS $$
 DECLARE
   new_number TEXT;
   counter INTEGER;
 BEGIN
-  SELECT COUNT(*) + 1 INTO counter FROM support_tickets;
+  -- Sequence kullanarak benzersiz sayı al (race condition güvenli)
+  counter := NEXTVAL('ticket_number_seq');
   new_number := 'TKT-' || TO_CHAR(NOW(), 'YYYYMM') || '-' || LPAD(counter::TEXT, 4, '0');
   RETURN new_number;
 END;

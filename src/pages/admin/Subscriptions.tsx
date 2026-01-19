@@ -45,7 +45,7 @@ interface NFCSubscription {
   };
 }
 
-type FilterStatus = "all" | "active" | "expiring" | "expired";
+type FilterStatus = "all" | "active" | "expired" | "suspended";
 
 const typeLabels: Record<string, string> = {
   "business-card": "Kartvizit",
@@ -59,6 +59,7 @@ export default function AdminSubscriptions() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [daysInputs, setDaysInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchSubscriptions();
@@ -133,20 +134,25 @@ export default function AdminSubscriptions() {
 
   const getSubscriptionStatus = (nfc: NFCSubscription): { status: string; color: string; icon: React.ElementType } => {
     if (!nfc.subscription_end_date) {
-      return { status: "Belirsiz", color: "bg-gray-500/10 text-gray-500", icon: Clock };
+      // Süre bilgisi yoksa, sadece is_active durumuna göre göster
+      return !nfc.is_active 
+        ? { status: "Duraklatılmış", color: "bg-gray-500/10 text-gray-500", icon: Power }
+        : { status: "Belirsiz", color: "bg-gray-500/10 text-gray-500", icon: Clock };
     }
 
     const endDate = new Date(nfc.subscription_end_date);
     const now = new Date();
     const daysLeft = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-    if (daysLeft < 0) {
+    // Önce süre durumunu kontrol et
+    if (daysLeft <= 0) {
+      // Süresi dolmuş veya 0 gün kalan - is_active durumuna bakmadan süresini göster
       return { status: "Süresi Doldu", color: "bg-destructive/10 text-destructive", icon: XCircle };
-    } else if (daysLeft <= 7) {
-      return { status: `${daysLeft} gün kaldı`, color: "bg-amber-500/10 text-amber-600", icon: AlertTriangle };
-    } else if (daysLeft <= 30) {
-      return { status: `${daysLeft} gün kaldı`, color: "bg-yellow-500/10 text-yellow-600", icon: Clock };
     } else {
+      // Süresi geçerli (daysLeft > 0), şimdi is_active durumuna bak
+      if (!nfc.is_active) {
+        return { status: "Duraklatılmış", color: "bg-gray-500/10 text-gray-500", icon: Power };
+      }
       return { status: "Aktif", color: "bg-accent/10 text-accent", icon: CheckCircle2 };
     }
   };
@@ -188,6 +194,12 @@ export default function AdminSubscriptions() {
       ));
 
       toast.success(`Abonelik ${days} gün uzatıldı`);
+      // Input'u temizle
+      setDaysInputs(prev => {
+        const newInputs = { ...prev };
+        delete newInputs[nfc.id];
+        return newInputs;
+      });
     } catch (error) {
       console.error("Abonelik uzatma hatası:", error);
       toast.error("Abonelik uzatılamadı");
@@ -239,11 +251,13 @@ export default function AdminSubscriptions() {
     
     switch (filterStatus) {
       case "active":
-        return daysLeft > 7;
-      case "expiring":
-        return daysLeft >= 0 && daysLeft <= 7;
+        return nfc.is_active && daysLeft > 0;
       case "expired":
-        return daysLeft < 0;
+        // Süresi dolmuş veya 0 gün kalan (is_active durumundan bağımsız)
+        return daysLeft <= 0;
+      case "suspended":
+        // Duraklatılmış: Admin tarafından manuel duraklatılmış (süresi hala geçerli)
+        return !nfc.is_active && daysLeft > 0;
       default:
         return true;
     }
@@ -252,12 +266,17 @@ export default function AdminSubscriptions() {
   // İstatistikler
   const stats = {
     total: subscriptions.length,
-    active: subscriptions.filter(n => getDaysRemaining(n.subscription_end_date) > 7).length,
-    expiring: subscriptions.filter(n => {
+    active: subscriptions.filter(n => n.is_active && getDaysRemaining(n.subscription_end_date) > 0).length,
+    // Süresi dolmuş veya 0 gün kalan (is_active durumundan bağımsız)
+    expired: subscriptions.filter(n => {
       const d = getDaysRemaining(n.subscription_end_date);
-      return d >= 0 && d <= 7;
+      return d <= 0; // 0 veya negatif = süresi dolmuş
     }).length,
-    expired: subscriptions.filter(n => getDaysRemaining(n.subscription_end_date) < 0).length,
+    // Duraklatılmış: Admin tarafından manuel duraklatılmış (süresi hala geçerli olanlar)
+    suspended: subscriptions.filter(n => {
+      const d = getDaysRemaining(n.subscription_end_date);
+      return !n.is_active && d > 0; // Devre dışı ama süresi hala geçerli
+    }).length,
   };
 
   if (loading) {
@@ -329,12 +348,12 @@ export default function AdminSubscriptions() {
             className="bg-card rounded-2xl p-4 border border-border/50"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-amber-500" />
+              <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center">
+                <XCircle className="w-5 h-5 text-destructive" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-amber-500">{stats.expiring}</p>
-                <p className="text-xs text-muted-foreground">Süresi Doluyor</p>
+                <p className="text-2xl font-bold text-destructive">{stats.expired}</p>
+                <p className="text-xs text-muted-foreground">Süresi Dolmuş</p>
               </div>
             </div>
           </motion.div>
@@ -346,12 +365,12 @@ export default function AdminSubscriptions() {
             className="bg-card rounded-2xl p-4 border border-border/50"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center">
-                <XCircle className="w-5 h-5 text-destructive" />
+              <div className="w-10 h-10 rounded-xl bg-gray-500/10 flex items-center justify-center">
+                <Power className="w-5 h-5 text-gray-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-destructive">{stats.expired}</p>
-                <p className="text-xs text-muted-foreground">Süresi Dolmuş</p>
+                <p className="text-2xl font-bold text-gray-500">{stats.suspended}</p>
+                <p className="text-xs text-muted-foreground">Duraklatılmış</p>
               </div>
             </div>
           </motion.div>
@@ -390,20 +409,20 @@ export default function AdminSubscriptions() {
               Aktif ({stats.active})
             </Button>
             <Button
-              variant={filterStatus === "expiring" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setFilterStatus("expiring")}
-              className={filterStatus === "expiring" ? "" : "text-amber-500 hover:text-amber-500"}
-            >
-              Süresi Doluyor ({stats.expiring})
-            </Button>
-            <Button
               variant={filterStatus === "expired" ? "default" : "outline"}
               size="sm"
               onClick={() => setFilterStatus("expired")}
               className={filterStatus === "expired" ? "" : "text-destructive hover:text-destructive"}
             >
               Süresi Dolmuş ({stats.expired})
+            </Button>
+            <Button
+              variant={filterStatus === "suspended" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFilterStatus("suspended")}
+              className={filterStatus === "suspended" ? "" : "text-gray-500 hover:text-gray-500"}
+            >
+              Duraklatılmış ({stats.suspended})
             </Button>
           </div>
         </motion.div>
@@ -437,8 +456,12 @@ export default function AdminSubscriptions() {
                   transition={{ delay: index * 0.05 }}
                   className={cn(
                     "bg-card rounded-2xl p-6 border transition-all",
-                    daysLeft < 0 ? "border-destructive/30 bg-destructive/5" :
-                    daysLeft <= 7 ? "border-amber-500/30 bg-amber-500/5" :
+                    // Hem süresi dolmuş hem duraklatılmışsa - öncelik duraklatılmış renklerinde, ama kırmızı çizgiyle göster
+                    (!nfc.is_active && daysLeft <= 0) ? "border-gray-500/30 bg-gray-500/5 border-l-4 border-l-destructive" :
+                    // Sadece duraklatılmış (süresi hala geçerli)
+                    !nfc.is_active && daysLeft > 0 ? "border-gray-500/30 bg-gray-500/5" :
+                    // Sadece süresi dolmuş
+                    daysLeft <= 0 ? "border-destructive/30 bg-destructive/5" :
                     "border-border/50"
                   )}
                 >
@@ -460,13 +483,25 @@ export default function AdminSubscriptions() {
                           <Badge variant="outline" className="text-xs">
                             {typeLabels[nfc.type] || nfc.type}
                           </Badge>
-                          <Badge className={cn("text-xs", subStatus.color)}>
-                            <StatusIcon className="w-3 h-3 mr-1" />
-                            {subStatus.status}
-                          </Badge>
-                          {!nfc.is_active && (
-                            <Badge variant="destructive" className="text-xs">
-                              Devre Dışı
+                          {/* Süre durumu badge'i */}
+                          {daysLeft <= 0 && (
+                            <Badge className="text-xs bg-destructive/10 text-destructive">
+                              <XCircle className="w-3 h-3 mr-1" />
+                              Süresi Doldu
+                            </Badge>
+                          )}
+                          {/* Duraklatılmış badge'i - sadece admin tarafından manuel duraklatılmış (süresi hala geçerli) */}
+                          {!nfc.is_active && daysLeft > 0 && (
+                            <Badge className="text-xs bg-gray-500/10 text-gray-500">
+                              <Power className="w-3 h-3 mr-1" />
+                              Duraklatılmış
+                            </Badge>
+                          )}
+                          {/* Aktif ve süresi geçerliyse normal durum badge'i */}
+                          {nfc.is_active && daysLeft > 0 && (
+                            <Badge className={cn("text-xs", subStatus.color)}>
+                              <StatusIcon className="w-3 h-3 mr-1" />
+                              {subStatus.status}
                             </Badge>
                           )}
                         </div>
@@ -492,12 +527,11 @@ export default function AdminSubscriptions() {
                           {nfc.subscription_end_date && (
                             <span className={cn(
                               "flex items-center gap-1 font-medium",
-                              daysLeft < 0 ? "text-destructive" :
-                              daysLeft <= 7 ? "text-amber-600" : "text-muted-foreground"
+                              daysLeft <= 0 ? "text-destructive" : "text-muted-foreground"
                             )}>
                               <Clock className="w-3 h-3" />
                               Bitiş: {new Date(nfc.subscription_end_date).toLocaleDateString('tr-TR')}
-                              {daysLeft >= 0 && ` (${daysLeft} gün)`}
+                              {daysLeft > 0 && ` (${daysLeft} gün)`}
                             </span>
                           )}
                           <span>
@@ -508,45 +542,82 @@ export default function AdminSubscriptions() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => extendSubscription(nfc, 30)}
-                        disabled={processingId === nfc.id}
-                      >
-                        <RefreshCw className={cn(
-                          "w-4 h-4 mr-1",
-                          processingId === nfc.id && "animate-spin"
-                        )} />
-                        +30 Gün
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => extendSubscription(nfc, 365)}
-                        disabled={processingId === nfc.id}
-                      >
-                        +1 Yıl
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => toggleNfcActive(nfc)}
-                        disabled={processingId === nfc.id}
-                      >
-                        <Power className="w-4 h-4 mr-1" />
-                        {nfc.is_active ? "Durdur" : "Aktif Et"}
-                      </Button>
-                      <a
-                        href={`/nfc/${nfc.type === "business-card" ? "business" : nfc.type === "pet-id" ? "pet" : "redirect"}/${nfc.unique_key}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <Button variant="ghost" size="sm">
-                          <ExternalLink className="w-4 h-4" />
+                    <div className="flex flex-col gap-3">
+                      {/* Gün Ekleme */}
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          placeholder="+ Gün"
+                          value={daysInputs[nfc.id] || ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            // Sadece pozitif sayılara izin ver
+                            if (value === "" || (!isNaN(Number(value)) && Number(value) >= 0)) {
+                              setDaysInputs(prev => ({ ...prev, [nfc.id]: value }));
+                            }
+                          }}
+                          className="w-24"
+                          min="0"
+                          disabled={processingId === nfc.id}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const days = parseInt(daysInputs[nfc.id] || "0");
+                              if (days > 0) {
+                                extendSubscription(nfc, days);
+                              }
+                            }
+                          }}
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const days = parseInt(daysInputs[nfc.id] || "0");
+                            if (days > 0) {
+                              extendSubscription(nfc, days);
+                              setDaysInputs(prev => {
+                                const newInputs = { ...prev };
+                                delete newInputs[nfc.id];
+                                return newInputs;
+                              });
+                            } else {
+                              toast.error("Lütfen geçerli bir gün sayısı girin");
+                            }
+                          }}
+                          disabled={processingId === nfc.id || !daysInputs[nfc.id] || parseInt(daysInputs[nfc.id] || "0") <= 0}
+                        >
+                          <RefreshCw className={cn(
+                            "w-4 h-4 mr-1",
+                            processingId === nfc.id && "animate-spin"
+                          )} />
+                          Onayla
                         </Button>
-                      </a>
+                      </div>
+                      
+                      {/* Diğer Butonlar */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Aktif Et/Durdur butonu sadece süresi geçerli olanlar için */}
+                        {daysLeft > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleNfcActive(nfc)}
+                            disabled={processingId === nfc.id}
+                          >
+                            <Power className="w-4 h-4 mr-1" />
+                            {nfc.is_active ? "Durdur" : "Aktif Et"}
+                          </Button>
+                        )}
+                        <a
+                          href={`/nfc/${nfc.type === "business-card" ? "business" : nfc.type === "pet-id" ? "pet" : "redirect"}/${nfc.unique_key}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <Button variant="ghost" size="sm">
+                            <ExternalLink className="w-4 h-4" />
+                          </Button>
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </motion.div>
