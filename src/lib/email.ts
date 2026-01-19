@@ -203,6 +203,32 @@ export const EMAIL_TEMPLATES = {
       <p>Saygılarımızla,<br><strong>Esdodesign Ekibi</strong></p>
     `)
   }),
+
+  // Email Doğrulama (Kayıt)
+  EMAIL_CONFIRMATION: (confirmationLink: string, firstName: string): EmailTemplate => ({
+    subject: `E-postanızı Doğrulayın - Esdodesign`,
+    html: baseTemplate(`
+      <h2>E-postanızı Doğrulayın! 👋</h2>
+      <p>Merhaba ${firstName},</p>
+      <p>Esdodesign ailesine hoş geldiniz! Hesabınızı aktifleştirmek için aşağıdaki butona tıklayarak e-posta adresinizi doğrulayın.</p>
+      
+      <a href="${confirmationLink}" class="button">E-postamı Doğrula</a>
+      
+      <div class="info-box">
+        <h3 style="margin-top: 0;">ℹ️ Bilgilendirme</h3>
+        <ul style="margin: 0; padding-left: 20px;">
+          <li style="margin-bottom: 8px;">Bu link 24 saat geçerlidir</li>
+          <li style="margin-bottom: 8px;">Eğer bu hesabı siz oluşturmadıysanız, bu e-postayı görmezden gelebilirsiniz</li>
+          <li style="margin-bottom: 0;">Doğrulama sonrası hesabınız otomatik olarak aktif olacaktır</li>
+        </ul>
+      </div>
+      
+      <p style="color: #666; font-size: 14px; margin-top: 20px;">Buton çalışmıyor mu? Aşağıdaki linki tarayıcınıza kopyalayıp yapıştırın:</p>
+      <p style="color: #6366f1; font-size: 13px; word-break: break-all; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 3px solid #6366f1;">${confirmationLink}</p>
+      
+      <p>Saygılarımızla,<br><strong>Esdodesign Ekibi</strong></p>
+    `)
+  }),
 };
 
 // =================================================
@@ -349,6 +375,20 @@ export const sendSupportEmail = async (
 // Hoş geldiniz emaili
 export const sendWelcomeEmail = async (email: string, firstName: string) => {
   return sendEmail(email, EMAIL_TEMPLATES.WELCOME(firstName));
+};
+
+// Email doğrulama emaili gönder
+export const sendEmailConfirmation = async (
+  email: string,
+  confirmationLink: string,
+  firstName: string
+) => {
+  return sendEmail(email, EMAIL_TEMPLATES.EMAIL_CONFIRMATION(confirmationLink, firstName));
+};
+
+// Şifre sıfırlama emaili gönder
+export const sendPasswordResetEmail = async (email: string, resetLink: string) => {
+  return sendEmail(email, EMAIL_TEMPLATES.PASSWORD_RESET(resetLink));
 };
 
 // Test emaili

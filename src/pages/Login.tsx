@@ -94,6 +94,12 @@ export default function Login() {
     try {
       const redirectUrl = `${window.location.origin}/auth/callback`;
       
+      // Supabase'in resend fonksiyonu email confirmation disabled olduğu için çalışmayabilir
+      // Alternatif: Resend ile direkt email gönder
+      // Ama confirmation token'ını alamayız, bu yüzden kullanıcıyı tekrar kayıt etmek gerekir
+      
+      // Şimdilik: Supabase'in resend fonksiyonunu kullan
+      // Email confirmation disabled ise bu çalışmayabilir
       const { error } = await supabase.auth.resend({
         type: 'signup',
         email: email,
@@ -105,7 +111,7 @@ export default function Login() {
       if (error) throw error;
 
       toast.success("Doğrulama e-postası tekrar gönderildi!");
-      setResendCountdown(60); // 60 saniye beklet (Supabase sınırı)
+      setResendCountdown(60); // 60 saniye beklet
     } catch (error: any) {
       console.error('Resend error:', error);
       const turkishMessage = translateError(error.message || "E-posta gönderilemedi. Lütfen tekrar deneyin.");
