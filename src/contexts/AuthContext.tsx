@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { User, Session } from "@supabase/supabase-js";
 import { supabase, UserProfile } from "@/lib/supabase";
 import { toast } from "sonner";
+import { sendEmailConfirmation, sendPasswordResetEmail, sendWelcomeEmail } from "@/lib/email";
 
 interface AuthContextType {
   user: User | null;
@@ -139,6 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = async (email: string, password: string, firstName: string, lastName: string) => {
     const redirectUrl = `${window.location.origin}/auth/callback`;
 
+    // Supabase'de email confirmation'ı disable ettiğimiz için otomatik confirm edilir
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -149,6 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           full_name: `${firstName} ${lastName}`.trim(),
         },
         emailRedirectTo: redirectUrl,
+        // Email confirmation disabled - kullanıcı otomatik confirm edilir
       },
     });
 
@@ -159,7 +162,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (data.user) {
-      toast.success("Hesabınız oluşturuldu! E-postanızı doğrulayın.");
+      // Resend ile hoş geldiniz emaili gönder
+      // Not: Email confirmation disabled olduğu için confirmation emaili göndermiyoruz
+      // Kullanıcı zaten otomatik confirm edilmiş durumda
+      try {
+        await sendWelcomeEmail(email, firstName);
+      } catch (emailError: any) {
+        console.error("Email gönderme hatası:", emailError);
+        // Email hatası olsa bile kayıt başarılı
+      }
+
+      toast.success("Hesabınız oluşturuldu! Hoş geldiniz!");
     }
   };
 
@@ -220,6 +233,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const resetPassword = async (email: string) => {
     const redirectUrl = `${window.location.origin}/reset-password`;
     
+    // Supabase'in resetPasswordForEmail'i token oluşturur ve email gönderir
+    // Email confirmation disabled olsa bile şifre sıfırlama emaili gönderilir
+    // Ama email'i Resend ile göndermek için Supabase email hook kullanılmalı
+    
+    // Şimdilik: Supabase'in kendi email sistemini kullan
+    // Production'da Resend kullanmak için Supabase Dashboard'da email hook ayarlanmalı
+    
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: redirectUrl,
     });
@@ -230,6 +250,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
 
+    // Not: Supabase'in oluşturduğu reset token'ını direkt alamayız
+    // Resend ile email göndermek için Supabase email hook kullanılmalı
+    // Veya Supabase Edge Function ile auth event'leri yakalanmalı
+    
     toast.success("Şifre sıfırlama e-postası gönderildi! Lütfen e-postanızı kontrol edin.");
   };
 
