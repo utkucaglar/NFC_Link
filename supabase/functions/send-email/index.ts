@@ -22,8 +22,12 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // JWT doğrulamasını atla (public function)
+  // Not: Production'da güvenlik için rate limiting ekleyin
+
   try {
     console.log("Received email request");
+    console.log("Headers:", Object.fromEntries(req.headers.entries()));
     
     // API key kontrolü
     if (!RESEND_API_KEY) {

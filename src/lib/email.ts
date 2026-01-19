@@ -243,7 +243,9 @@ export const sendEmail = async (
   }
 
   try {
-    // Supabase Edge Function'ı çağır
+    console.log("Calling Edge Function send-email...");
+    
+    // Supabase Edge Function'ı çağır (anon key ile)
     const { data, error } = await supabase.functions.invoke("send-email", {
       body: {
         to,
@@ -252,23 +254,32 @@ export const sendEmail = async (
         from_name: settings.from_name,
         from_email: settings.from_email,
       },
+      headers: {
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
     });
 
+    console.log("Edge Function response:", { data, error });
+
     if (error) {
+      console.error("Edge Function error:", error);
       await logEmail(to, template.subject, "failed", error.message);
-      return { success: false, error: error.message };
+      return { success: false, error: error.message || "Edge Function çağrılamadı" };
     }
 
     if (data?.success) {
       await logEmail(to, template.subject, "sent");
       return { success: true, id: data.id };
     } else {
-      await logEmail(to, template.subject, "failed", data?.error);
-      return { success: false, error: data?.error || "Email gönderilemedi" };
+      const errorMsg = data?.error || "Email gönderilemedi";
+      console.error("Email send failed:", errorMsg);
+      await logEmail(to, template.subject, "failed", errorMsg);
+      return { success: false, error: errorMsg };
     }
   } catch (error: any) {
+    console.error("Email send exception:", error);
     await logEmail(to, template.subject, "failed", error.message);
-    return { success: false, error: error.message };
+    return { success: false, error: error.message || "Beklenmeyen hata" };
   }
 };
 

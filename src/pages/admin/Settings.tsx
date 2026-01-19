@@ -593,6 +593,15 @@ export default function AdminSettings() {
                 Test göndermek için Email servisini etkinleştirin
               </p>
             )}
+            {emailSettings.is_enabled && (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-sm">
+                <p className="text-blue-500 font-medium mb-1">⚠️ Resend Free Tier Notu:</p>
+                <p className="text-muted-foreground">
+                  Domain doğrulaması olmadan sadece <strong>Resend hesabınıza kayıtlı email adresine</strong> gönderebilirsiniz. 
+                  Production için domain doğrulaması yapmanız gerekir.
+                </p>
+              </div>
+            )}
           </div>
         </motion.div>
 
