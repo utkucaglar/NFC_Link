@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Package,
@@ -14,6 +14,8 @@ import {
   ArrowDown,
   Pencil,
   Check,
+  Upload,
+  Link as LinkIcon,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -118,10 +120,25 @@ export default function AdminProducts() {
   const [editingSpecKey, setEditingSpecKey] = useState<string | null>(null);
   const [editingSpecKeyValue, setEditingSpecKeyValue] = useState("");
   const [editingSpecValueValue, setEditingSpecValueValue] = useState("");
+  
+  // Görsel yükleme state'leri
+  const [imageUploadMethod, setImageUploadMethod] = useState<"url" | "file">("url");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Modal açıldığında görsel preview'ı güncelle
+  useEffect(() => {
+    if (showModal && editingProduct?.image_url) {
+      setImagePreview(editingProduct.image_url);
+    } else if (showModal && !editingProduct?.image_url) {
+      setImagePreview(null);
+    }
+  }, [showModal, editingProduct?.image_url]);
 
   const fetchData = async () => {
     try {
@@ -148,6 +165,75 @@ export default function AdminProducts() {
       toast.error("Veriler yüklenemedi");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Görsel yükleme fonksiyonu
+  const handleImageFileUpload = async (file: File) => {
+    if (!file) return;
+    
+    // Dosya boyutu kontrolü (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Dosya boyutu 5MB'dan küçük olmalıdır");
+      return;
+    }
+
+    // Dosya tipi kontrolü
+    if (!file.type.startsWith('image/')) {
+      toast.error("Lütfen geçerli bir görsel dosyası seçin");
+      return;
+    }
+
+    setUploadingImage(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `product-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      
+      // Supabase Storage'a yükle
+      const { error: uploadError } = await supabase.storage
+        .from("product-images")
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) {
+        // Eğer bucket yoksa, kullanıcıya detaylı bilgi ver
+        if (uploadError.message?.includes("Bucket not found") || uploadError.message?.includes("not found")) {
+          toast.error(
+            "Storage bucket bulunamadı! Supabase SQL Editor'da '21_product_images_storage.sql' dosyasını çalıştırın.",
+            {
+              duration: 6000,
+            }
+          );
+        } else {
+          console.error("Upload error:", uploadError);
+          throw uploadError;
+        }
+        return;
+      }
+
+      // Public URL'i al
+      const { data: urlData } = supabase.storage
+        .from("product-images")
+        .getPublicUrl(fileName);
+
+      // URL'i ürüne ata
+      setEditingProduct({ ...editingProduct, image_url: urlData.publicUrl });
+      setImagePreview(urlData.publicUrl);
+      toast.success("Görsel yüklendi");
+    } catch (error: any) {
+      console.error("Görsel yükleme hatası:", error);
+      toast.error(error.message || "Görsel yüklenemedi");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleImageFileUpload(file);
     }
   };
 
@@ -203,6 +289,11 @@ export default function AdminProducts() {
       setShowModal(false);
       setEditingProduct(null);
       setActiveTab("basic");
+      setImageUploadMethod("url");
+      setImagePreview(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       fetchData();
     } catch (error: any) {
       console.error("Kaydetme hatası:", error);
@@ -482,6 +573,11 @@ export default function AdminProducts() {
               onClick={() => {
                 setEditingProduct(emptyProduct);
                 setActiveTab("basic");
+                setImageUploadMethod("url");
+                setImagePreview(null);
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = "";
+                }
                 setShowModal(true);
               }}
             >
@@ -604,6 +700,11 @@ export default function AdminProducts() {
                           specs: product.specs || {},
                         });
                         setActiveTab("basic");
+                        setImageUploadMethod("url");
+                        setImagePreview(product.image_url || null);
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = "";
+                        }
                         setShowModal(true);
                       }}
                     >
@@ -797,20 +898,126 @@ export default function AdminProducts() {
                 </div>
 
                 <div>
-                  <Label htmlFor="image">Görsel URL</Label>
-                  <Input
-                    id="image"
-                    value={editingProduct?.image_url || ""}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })}
-                    placeholder="https://example.com/image.jpg"
-                  />
-                  <div className="mt-2 w-24 h-24 rounded-lg overflow-hidden bg-muted">
-                    <img
-                      src={getProductImage(editingProduct?.image_url || null, editingProduct?.category || "")}
-                      alt="Preview"
-                      className="w-full h-full object-contain p-2"
-                    />
+                  <Label>Ürün Görseli</Label>
+                  
+                  {/* Yükleme yöntemi seçimi */}
+                  <div className="flex gap-2 mb-3">
+                    <Button
+                      type="button"
+                      variant={imageUploadMethod === "url" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setImageUploadMethod("url");
+                        setImagePreview(editingProduct?.image_url || null);
+                      }}
+                      className="flex-1"
+                    >
+                      <LinkIcon className="w-4 h-4 mr-2" />
+                      URL ile Ekle
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={imageUploadMethod === "file" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setImageUploadMethod("file");
+                        fileInputRef.current?.click();
+                      }}
+                      className="flex-1"
+                      disabled={uploadingImage}
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      Dosya Yükle
+                    </Button>
                   </div>
+
+                  {/* URL girişi */}
+                  {imageUploadMethod === "url" && (
+                    <div>
+                      <Input
+                        id="image"
+                        value={editingProduct?.image_url || ""}
+                        onChange={(e) => {
+                          const url = e.target.value;
+                          setEditingProduct({ ...editingProduct, image_url: url });
+                          setImagePreview(url || null);
+                        }}
+                        placeholder="https://example.com/image.jpg"
+                        className="mb-2"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Görsel URL'sini girin
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Dosya yükleme */}
+                  {imageUploadMethod === "file" && (
+                    <div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageFileSelect}
+                        className="hidden"
+                      />
+                      <div className="border-2 border-dashed border-border rounded-lg p-4 text-center">
+                        {uploadingImage ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                            <p className="text-sm text-muted-foreground">Yükleniyor...</p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2">
+                            <Upload className="w-8 h-8 text-muted-foreground" />
+                            <p className="text-sm text-muted-foreground">
+                              Görsel dosyası seçin (JPG, PNG, max 5MB)
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              Dosya Seç
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Görsel önizleme */}
+                  {(imagePreview || editingProduct?.image_url) && (
+                    <div className="mt-4">
+                      <Label>Önizleme</Label>
+                      <div className="mt-2 w-full max-w-xs rounded-lg overflow-hidden bg-muted border border-border">
+                        <img
+                          src={getProductImage(imagePreview || editingProduct?.image_url || null, editingProduct?.category || "")}
+                          alt="Preview"
+                          className="w-full h-48 object-contain p-4"
+                        />
+                      </div>
+                      {(imagePreview || editingProduct?.image_url) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="mt-2 text-destructive hover:text-destructive"
+                          onClick={() => {
+                            setEditingProduct({ ...editingProduct, image_url: "" });
+                            setImagePreview(null);
+                            if (fileInputRef.current) {
+                              fileInputRef.current.value = "";
+                            }
+                          }}
+                        >
+                          <X className="w-4 h-4 mr-2" />
+                          Görseli Kaldır
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1137,6 +1344,11 @@ export default function AdminProducts() {
                   setShowModal(false);
                   setEditingProduct(null);
                   setActiveTab("basic");
+                  setImageUploadMethod("url");
+                  setImagePreview(null);
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                  }
                 }}
               >
                 İptal
