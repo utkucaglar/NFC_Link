@@ -107,7 +107,7 @@ serve(async (req) => {
     const { type, user, token, redirect_to } = body;
 
     const firstName = user.user_metadata?.first_name || "Kullanıcı";
-    const fromEmail = emailSettings.from_email || "noreply@noreply.esdodesign.com";
+    const fromEmail = emailSettings.from_email || "noreply@esdodesign.com";
     const fromName = emailSettings.from_name || "Esdodesign";
 
     let subject = "";

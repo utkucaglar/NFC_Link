@@ -44,6 +44,26 @@ Deno.serve(async (req) => {
     const body: TicketNotificationRequest = await req.json();
     console.log("Request body:", JSON.stringify({ ticketNumber: body.ticketNumber }));
 
+    // Email ayarlarını al (from_email için)
+    let fromEmail = "Esdodesign <noreply@esdodesign.com>";
+    try {
+      const { data: emailSettings, error: settingsError } = await supabaseAdmin
+        .from("site_settings")
+        .select("value")
+        .eq("key", "email_settings")
+        .single();
+
+      if (!settingsError && emailSettings) {
+        const settings = JSON.parse(emailSettings.value);
+        if (settings.from_email && settings.from_name) {
+          fromEmail = `${settings.from_name} <${settings.from_email}>`;
+          console.log(`📧 Email ayarlarından from adresi alındı: ${fromEmail}`);
+        }
+      }
+    } catch (err) {
+      console.warn("⚠️ Email ayarları alınamadı, varsayılan kullanılıyor:", err);
+    }
+
     // Admin email'lerini al (RLS bypass ile)
     const { data: admins, error: adminError } = await supabaseAdmin
       .from("user_profiles")
@@ -141,7 +161,7 @@ Deno.serve(async (req) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: "Esdodesign <noreply@noreply.esdodesign.com>",
+            from: fromEmail,
             to: [admin.email],
             subject: `Yeni Destek Talebi - #${body.ticketNumber}`,
             html: emailHtml,
