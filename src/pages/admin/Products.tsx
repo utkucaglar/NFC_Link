@@ -295,7 +295,19 @@ export default function AdminProducts() {
       const fileExt = file.name.split('.').pop();
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(7);
-      const fileName = `products/${productId}/colors/${color}/${timestamp}-${random}.${fileExt}`;
+      
+      // Renk adını URL-safe hale getir (boşlukları tire ile değiştir, Türkçe karakterleri normalize et)
+      const sanitizeColorName = (colorName: string): string => {
+        return colorName
+          .toLowerCase()
+          .normalize('NFD') // Türkçe karakterleri normalize et (ş -> s + ̧)
+          .replace(/[\u0300-\u036f]/g, '') // Diyakritik işaretleri kaldır
+          .replace(/[^a-z0-9]+/g, '-') // Özel karakterleri ve boşlukları tire ile değiştir
+          .replace(/^-+|-+$/g, ''); // Başta ve sonda tire varsa kaldır
+      };
+      
+      const safeColorName = sanitizeColorName(color);
+      const fileName = `products/${productId}/colors/${safeColorName}/${timestamp}-${random}.${fileExt}`;
       
       const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, file, {
         cacheControl: '3600',
