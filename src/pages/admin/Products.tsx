@@ -612,6 +612,41 @@ export default function AdminProducts() {
 
   const handleDelete = async (productId: number) => {
     try {
+      // Önce bu ürünün siparişlerde kullanılıp kullanılmadığını kontrol et
+      const { data: orderItems, error: checkError } = await supabase
+        .from("order_items")
+        .select("id, order_id")
+        .eq("product_id", productId)
+        .limit(1);
+
+      if (checkError) {
+        console.error("Kontrol hatası:", checkError);
+      }
+
+      // Eğer siparişlerde kullanılıyorsa
+      if (orderItems && orderItems.length > 0) {
+        toast.error(
+          "Bu ürün siparişlerde kullanıldığı için silinemez. Ürünü pasif yapabilirsiniz.",
+          {
+            duration: 5000,
+          }
+        );
+        setDeleteConfirm(null);
+        return;
+      }
+
+      // Ürün görsellerini de sil
+      const { error: imagesError } = await supabase
+        .from("product_images")
+        .delete()
+        .eq("product_id", productId);
+
+      if (imagesError) {
+        console.error("Görsel silme hatası:", imagesError);
+        // Devam et, görsel silme hatası kritik değil
+      }
+
+      // Ürünü sil
       const { error } = await supabase
         .from("products")
         .delete()
@@ -622,9 +657,21 @@ export default function AdminProducts() {
       setProducts(products.filter(p => p.id !== productId));
       toast.success("Ürün silindi");
       setDeleteConfirm(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Silme hatası:", error);
-      toast.error("Ürün silinemedi");
+      
+      // Foreign key hatası kontrolü
+      if (error?.code === "23503" || error?.message?.includes("foreign key")) {
+        toast.error(
+          "Bu ürün siparişlerde kullanıldığı için silinemez. Ürünü pasif yapabilirsiniz.",
+          {
+            duration: 5000,
+          }
+        );
+      } else {
+        toast.error(`Ürün silinemedi: ${error?.message || "Bilinmeyen hata"}`);
+      }
+      setDeleteConfirm(null);
     }
   };
 
