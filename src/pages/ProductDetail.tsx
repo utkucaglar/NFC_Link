@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2, ChevronRight, X, Star, MessageSquare, User, ThumbsUp, Send } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2, ChevronRight, ChevronLeft, X, Star, MessageSquare, User, ThumbsUp, Send } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -207,6 +207,77 @@ export default function ProductDetail() {
       setCurrentProductImage(productImages[currentImageIndex]);
     }
   }, [currentImageIndex, productImages]);
+
+  // Klavye ile gezinme (sol/sağ ok tuşları)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (productImages.length <= 1) return;
+      
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setCurrentImageIndex((prev) => 
+          prev > 0 ? prev - 1 : productImages.length - 1
+        );
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setCurrentImageIndex((prev) => 
+          prev < productImages.length - 1 ? prev + 1 : 0
+        );
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [productImages.length]);
+
+  // Touch/swipe desteği için
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [touchEnd, setTouchEnd] = useState<number | null>(null);
+
+  const minSwipeDistance = 50;
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    setTouchEnd(null);
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+    
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+
+    if (isLeftSwipe && productImages.length > 1) {
+      setCurrentImageIndex((prev) => 
+        prev < productImages.length - 1 ? prev + 1 : 0
+      );
+    }
+    if (isRightSwipe && productImages.length > 1) {
+      setCurrentImageIndex((prev) => 
+        prev > 0 ? prev - 1 : productImages.length - 1
+      );
+    }
+  };
+
+  // Görsel değiştirme fonksiyonları
+  const goToPreviousImage = useCallback(() => {
+    if (productImages.length <= 1) return;
+    setCurrentImageIndex((prev) => 
+      prev > 0 ? prev - 1 : productImages.length - 1
+    );
+  }, [productImages.length]);
+
+  const goToNextImage = useCallback(() => {
+    if (productImages.length <= 1) return;
+    setCurrentImageIndex((prev) => 
+      prev < productImages.length - 1 ? prev + 1 : 0
+    );
+  }, [productImages.length]);
 
   const fetchReviews = async () => {
     if (!product?.id) return;
@@ -522,13 +593,33 @@ export default function ProductDetail() {
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
-              className="bg-muted/30 rounded-3xl p-8 lg:p-12 flex flex-col items-center justify-center relative"
+              className="bg-muted/30 rounded-3xl p-8 lg:p-12 flex flex-col items-center justify-center relative overflow-hidden"
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
             >
-              <img
-                src={currentProductImage}
-                alt={product.name}
-                className="w-full max-w-md object-contain"
-              />
+              {/* Image Container with Fade Animation */}
+              <div className="relative w-full max-w-md aspect-square flex items-center justify-center">
+                <AnimatePresence mode="wait">
+                  <motion.img
+                    key={currentImageIndex}
+                    src={currentProductImage}
+                    alt={`${product.name} - Görsel ${currentImageIndex + 1}`}
+                    className="w-full h-full object-contain"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </AnimatePresence>
+              </div>
+              
+              {/* Image Counter */}
+              {productImages.length > 1 && (
+                <div className="absolute top-4 right-4 bg-background/90 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium text-muted-foreground">
+                  {currentImageIndex + 1} / {productImages.length}
+                </div>
+              )}
               
               {/* Image Pagination Dots */}
               {productImages.length > 1 && (
@@ -537,10 +628,10 @@ export default function ProductDetail() {
                     <button
                       key={index}
                       onClick={() => setCurrentImageIndex(index)}
-                      className={`w-2 h-2 rounded-full transition-all ${
+                      className={`h-2 rounded-full transition-all duration-300 ${
                         currentImageIndex === index
                           ? "bg-primary w-8"
-                          : "bg-muted-foreground/30 hover:bg-muted-foreground/50"
+                          : "bg-muted-foreground/30 hover:bg-muted-foreground/50 w-2"
                       }`}
                       aria-label={`Görsel ${index + 1}`}
                     />
@@ -548,26 +639,22 @@ export default function ProductDetail() {
                 </div>
               )}
               
-              {/* Navigation Arrows */}
+              {/* Navigation Arrows - Daha belirgin ve büyük */}
               {productImages.length > 1 && (
                 <>
                   <button
-                    onClick={() => setCurrentImageIndex((prev) => 
-                      prev > 0 ? prev - 1 : productImages.length - 1
-                    )}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-background/80 hover:bg-background border border-border flex items-center justify-center transition-all hover:scale-110"
+                    onClick={goToPreviousImage}
+                    className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 md:w-14 md:h-14 rounded-full bg-background/95 hover:bg-background backdrop-blur-sm border-2 border-border hover:border-primary flex items-center justify-center transition-all hover:scale-110 shadow-lg z-10 group"
                     aria-label="Önceki görsel"
                   >
-                    <ChevronRight className="w-5 h-5 rotate-180" />
+                    <ChevronLeft className="w-6 h-6 md:w-7 md:h-7 text-foreground group-hover:text-primary transition-colors" />
                   </button>
                   <button
-                    onClick={() => setCurrentImageIndex((prev) => 
-                      prev < productImages.length - 1 ? prev + 1 : 0
-                    )}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-background/80 hover:bg-background border border-border flex items-center justify-center transition-all hover:scale-110"
+                    onClick={goToNextImage}
+                    className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 w-12 h-12 md:w-14 md:h-14 rounded-full bg-background/95 hover:bg-background backdrop-blur-sm border-2 border-border hover:border-primary flex items-center justify-center transition-all hover:scale-110 shadow-lg z-10 group"
                     aria-label="Sonraki görsel"
                   >
-                    <ChevronRight className="w-5 h-5" />
+                    <ChevronRight className="w-6 h-6 md:w-7 md:h-7 text-foreground group-hover:text-primary transition-colors" />
                   </button>
                 </>
               )}
