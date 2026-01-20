@@ -295,18 +295,16 @@ export const sendEmail = async (
   const settings = await getEmailSettings();
 
   if (!settings) {
-    console.log("Email ayarları bulunamadı");
+    // Email ayarları yoksa sessizce başarısız döndür (konsola yazma)
     return { success: false, error: "Email ayarları yapılandırılmamış" };
   }
 
   if (!settings.is_enabled) {
-    console.log("Email servisi devre dışı");
+    // Email servisi devre dışıysa sessizce başarısız döndür (konsola yazma)
     return { success: false, error: "Email servisi devre dışı" };
   }
 
   try {
-    console.log("Calling Edge Function send-email...");
-    
     // Supabase Edge Function'ı çağır (anon key ile)
     const { data, error } = await supabase.functions.invoke("send-email", {
       body: {
@@ -321,10 +319,7 @@ export const sendEmail = async (
       },
     });
 
-    console.log("Edge Function response:", { data, error });
-
     if (error) {
-      console.error("Edge Function error:", error);
       await logEmail(to, template.subject, "failed", error.message);
       return { success: false, error: error.message || "Edge Function çağrılamadı" };
     }
@@ -334,12 +329,10 @@ export const sendEmail = async (
       return { success: true, id: data.id };
     } else {
       const errorMsg = data?.error || "Email gönderilemedi";
-      console.error("Email send failed:", errorMsg);
       await logEmail(to, template.subject, "failed", errorMsg);
       return { success: false, error: errorMsg };
     }
   } catch (error: any) {
-    console.error("Email send exception:", error);
     await logEmail(to, template.subject, "failed", error.message);
     return { success: false, error: error.message || "Beklenmeyen hata" };
   }

@@ -285,7 +285,16 @@ export default function AdminOrders() {
         
         if (userProfile?.email) {
           sendOrderStatusEmail(userProfile.email, order.order_number, newStatus, undefined, undefined, trackingNumber)
-            .catch(console.error);
+            .then((result) => {
+              if (!result.success) {
+                // Email gönderilemedi ama sipariş durumu güncellendi, sessizce logla
+                console.warn("Email gönderilemedi:", result.error);
+              }
+            })
+            .catch((error) => {
+              // Email hatası sipariş güncellemesini engellemez
+              console.warn("Email gönderme hatası:", error);
+            });
         }
       }
 
