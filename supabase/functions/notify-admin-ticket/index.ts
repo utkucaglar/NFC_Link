@@ -133,7 +133,6 @@ Deno.serve(async (req) => {
     // Her admin'e email gönder
     const results = await Promise.allSettled(
       admins.map(async (admin) => {
-        console.log(`📧 ${admin.email} adresine email gönderiliyor...`);
 
         const response = await fetch("https://api.resend.com/emails", {
           method: "POST",
