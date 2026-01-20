@@ -415,7 +415,7 @@ export const sendPasswordResetEmail = async (email: string, resetLink: string) =
   return sendEmail(email, EMAIL_TEMPLATES.PASSWORD_RESET(resetLink));
 };
 
-// Yeni destek talebi bildirimi (Admin'lere)
+// Yeni destek talebi bildirimi (Admin'lere) - Edge Function kullanarak
 export const sendNewTicketNotificationToAdmins = async (
   ticketNumber: string,
   subject: string,
@@ -425,61 +425,45 @@ export const sendNewTicketNotificationToAdmins = async (
   message: string
 ) => {
   try {
-    // Admin email'lerini al
-    const { data: admins, error } = await supabase
-      .from("user_profiles")
-      .select("email, first_name")
-      .eq("role", "admin");
+    console.log("🔔 Admin bildirimi başlatılıyor...", { ticketNumber, subject, category });
+    
+    // Edge Function'ı çağır (RLS bypass ile admin email'lerini alır)
+    const { data, error } = await supabase.functions.invoke("notify-admin-ticket", {
+      body: {
+        ticketNumber,
+        subject,
+        category,
+        customerName,
+        customerEmail,
+        message,
+      },
+      headers: {
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+    });
 
     if (error) {
-      console.error("Admin email'leri alınamadı:", error);
-      return { success: false, error: "Admin email'leri alınamadı" };
+      console.error("❌ Edge Function hatası:", error);
+      return { success: false, error: error.message || "Edge Function çağrılamadı" };
     }
 
-    if (!admins || admins.length === 0) {
-      console.log("Admin kullanıcı bulunamadı");
-      return { success: false, error: "Admin kullanıcı bulunamadı" };
+    console.log("✅ Edge Function yanıtı:", data);
+
+    if (data?.success) {
+      console.log(`✅ Admin bildirimleri başarılı: ${data.sentCount}/${data.totalAdmins} email gönderildi`);
+      return {
+        success: true,
+        sentCount: data.sentCount || 0,
+        failedCount: data.failedCount || 0,
+        totalAdmins: data.totalAdmins || 0,
+      };
+    } else {
+      console.error("❌ Admin bildirimi başarısız:", data?.error);
+      return { success: false, error: data?.error || "Email gönderilemedi" };
     }
-
-    // Kategori label'ını al
-    const categoryLabels: Record<string, string> = {
-      general: "Genel Bilgi",
-      order: "Sipariş Hakkında",
-      technical: "Teknik Destek",
-      billing: "Ödeme/Fatura",
-      other: "Diğer",
-    };
-    const categoryLabel = categoryLabels[category] || category;
-
-    // Her admin'e email gönder
-    const results = await Promise.allSettled(
-      admins.map((admin) =>
-        sendEmail(
-          admin.email,
-          EMAIL_TEMPLATES.SUPPORT_NEW_TICKET(
-            ticketNumber,
-            subject,
-            categoryLabel,
-            customerName,
-            customerEmail,
-            message
-          )
-        )
-      )
-    );
-
-    const successCount = results.filter((r) => r.status === "fulfilled" && r.value.success).length;
-    const failedCount = results.length - successCount;
-
-    console.log(`Admin bildirimleri: ${successCount} başarılı, ${failedCount} başarısız`);
-
-    return {
-      success: successCount > 0,
-      sentCount: successCount,
-      failedCount,
-    };
   } catch (error: any) {
-    console.error("Admin bildirimi hatası:", error);
+    console.error("❌ Admin bildirimi exception:", error);
+    console.error("Error stack:", error.stack);
     return { success: false, error: error.message || "Beklenmeyen hata" };
   }
 };

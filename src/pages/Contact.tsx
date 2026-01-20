@@ -253,7 +253,13 @@ export default function Contact() {
         const customerName = profile?.full_name || `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim() || "Müşteri";
         const customerEmail = profile?.email || user?.email || "";
         
-        await sendNewTicketNotificationToAdmins(
+        console.log("🔔 Admin bildirimi gönderiliyor...", {
+          ticketNumber: ticketData.ticket_number,
+          customerName,
+          customerEmail,
+        });
+        
+        const emailResult = await sendNewTicketNotificationToAdmins(
           ticketData.ticket_number,
           newSubject.trim(),
           newCategory,
@@ -261,8 +267,16 @@ export default function Contact() {
           customerEmail,
           newMessage.trim()
         );
-      } catch (emailError) {
-        console.error("Admin bildirimi gönderilemedi:", emailError);
+        
+        if (emailResult.success) {
+          console.log("✅ Admin bildirimi başarılı:", emailResult);
+        } else {
+          console.error("❌ Admin bildirimi başarısız:", emailResult);
+          // Kullanıcıya hata gösterme, sadece logla
+        }
+      } catch (emailError: any) {
+        console.error("❌ Admin bildirimi exception:", emailError);
+        console.error("Error details:", emailError?.message, emailError?.stack);
         // Email hatası olsa bile ticket oluşturuldu, kullanıcıya hata gösterme
       }
 
