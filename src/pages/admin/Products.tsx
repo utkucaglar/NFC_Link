@@ -14,6 +14,9 @@ import {
   ArrowDown,
   Pencil,
   Check,
+  Upload,
+  Link as LinkIcon,
+  Image as ImageIcon,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -118,6 +121,12 @@ export default function AdminProducts() {
   const [editingSpecKey, setEditingSpecKey] = useState<string | null>(null);
   const [editingSpecKeyValue, setEditingSpecKeyValue] = useState("");
   const [editingSpecValueValue, setEditingSpecValueValue] = useState("");
+  
+  // Image upload state'leri
+  const [imageUploadMethod, setImageUploadMethod] = useState<"url" | "file">("url");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -151,6 +160,73 @@ export default function AdminProducts() {
     }
   };
 
+  // Dosya yükleme fonksiyonu
+  const uploadImageFile = async (file: File): Promise<string | null> => {
+    try {
+      setUploadingImage(true);
+      
+      // Ürün ID'si varsa onu kullan, yoksa geçici bir ID oluştur
+      const productId = editingProduct?.id || `temp-${Date.now()}`;
+      const fileExt = file.name.split('.').pop();
+      const fileName = `products/${productId}/${Date.now()}.${fileExt}`;
+      
+      // Önce eski görseli sil (düzenleme durumunda)
+      if (editingProduct?.id && editingProduct?.image_url) {
+        const oldUrl = editingProduct.image_url;
+        // Supabase storage URL'i ise dosya yolunu çıkar
+        if (oldUrl.includes('/storage/v1/object/public/')) {
+          const pathMatch = oldUrl.match(/\/storage\/v1\/object\/public\/product-images\/(.+)/);
+          if (pathMatch) {
+            await supabase.storage.from("product-images").remove([pathMatch[1]]);
+          }
+        }
+      }
+      
+      const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+      
+      if (uploadError) throw uploadError;
+      
+      const { data: urlData } = supabase.storage.from("product-images").getPublicUrl(fileName);
+      
+      return urlData.publicUrl;
+    } catch (error: any) {
+      console.error("Görsel yükleme hatası:", error);
+      throw error;
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  // Dosya seçildiğinde preview oluştur
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Dosya tipi kontrolü
+      if (!file.type.startsWith('image/')) {
+        toast.error("Lütfen bir resim dosyası seçin");
+        return;
+      }
+      
+      // Dosya boyutu kontrolü (10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error("Dosya boyutu 10MB'dan küçük olmalıdır");
+        return;
+      }
+      
+      setSelectedFile(file);
+      
+      // Preview oluştur
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSave = async () => {
     if (!editingProduct?.name || !editingProduct?.price || !editingProduct?.category) {
       toast.error("Lütfen zorunlu alanları doldurun (Ad, Fiyat, Kategori)");
@@ -159,6 +235,19 @@ export default function AdminProducts() {
 
     setSaving(true);
     try {
+      let imageUrl = editingProduct.image_url || null;
+      
+      // Dosya yükleme modundaysa ve dosya seçilmişse yükle
+      if (imageUploadMethod === "file" && selectedFile) {
+        const uploadedUrl = await uploadImageFile(selectedFile);
+        if (uploadedUrl) {
+          imageUrl = uploadedUrl;
+        } else {
+          toast.error("Görsel yüklenemedi");
+          return;
+        }
+      }
+
       const productData = {
         name: editingProduct.name,
         description: editingProduct.description || null,
@@ -167,7 +256,7 @@ export default function AdminProducts() {
         price: editingProduct.price,
         category: editingProduct.category,
         category_id: editingProduct.category_id || null,
-        image_url: editingProduct.image_url || null,
+        image_url: imageUrl,
         features: editingProduct.features || null,
         colors: editingProduct.colors || null,
         specs: editingProduct.specs || null,
@@ -202,6 +291,9 @@ export default function AdminProducts() {
 
       setShowModal(false);
       setEditingProduct(null);
+      setSelectedFile(null);
+      setImagePreview(null);
+      setImageUploadMethod("url");
       setActiveTab("basic");
       fetchData();
     } catch (error: any) {
@@ -482,6 +574,9 @@ export default function AdminProducts() {
               onClick={() => {
                 setEditingProduct(emptyProduct);
                 setActiveTab("basic");
+                setImageUploadMethod("url");
+                setSelectedFile(null);
+                setImagePreview(null);
                 setShowModal(true);
               }}
             >
@@ -604,6 +699,9 @@ export default function AdminProducts() {
                           specs: product.specs || {},
                         });
                         setActiveTab("basic");
+                        setImageUploadMethod("url");
+                        setSelectedFile(null);
+                        setImagePreview(null);
                         setShowModal(true);
                       }}
                     >
@@ -797,19 +895,129 @@ export default function AdminProducts() {
                 </div>
 
                 <div>
-                  <Label htmlFor="image">Görsel URL</Label>
-                  <Input
-                    id="image"
-                    value={editingProduct?.image_url || ""}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })}
-                    placeholder="https://example.com/image.jpg"
-                  />
-                  <div className="mt-2 w-24 h-24 rounded-lg overflow-hidden bg-muted">
-                    <img
-                      src={getProductImage(editingProduct?.image_url || null, editingProduct?.category || "")}
-                      alt="Preview"
-                      className="w-full h-full object-contain p-2"
-                    />
+                  <Label className="mb-3 block">Ürün Görseli</Label>
+                  
+                  {/* Yöntem Seçimi */}
+                  <div className="flex gap-2 mb-4">
+                    <Button
+                      type="button"
+                      variant={imageUploadMethod === "url" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setImageUploadMethod("url");
+                        setSelectedFile(null);
+                        setImagePreview(null);
+                      }}
+                      className="flex-1"
+                    >
+                      <LinkIcon className="w-4 h-4 mr-2" />
+                      URL ile Ekle
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={imageUploadMethod === "file" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setImageUploadMethod("file");
+                        setEditingProduct({ ...editingProduct, image_url: "" });
+                      }}
+                      className="flex-1"
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      Dosyadan Yükle
+                    </Button>
+                  </div>
+
+                  {/* URL Input */}
+                  {imageUploadMethod === "url" && (
+                    <div>
+                      <Input
+                        id="image"
+                        value={editingProduct?.image_url || ""}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })}
+                        placeholder="https://example.com/image.jpg"
+                      />
+                    </div>
+                  )}
+
+                  {/* File Input */}
+                  {imageUploadMethod === "file" && (
+                    <div>
+                      <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
+                        <input
+                          type="file"
+                          id="file-upload"
+                          accept="image/*"
+                          onChange={handleFileSelect}
+                          className="hidden"
+                        />
+                        <label
+                          htmlFor="file-upload"
+                          className="cursor-pointer flex flex-col items-center gap-2"
+                        >
+                          {imagePreview ? (
+                            <>
+                              <img
+                                src={imagePreview}
+                                alt="Preview"
+                                className="w-32 h-32 object-contain rounded-lg mb-2"
+                              />
+                              <p className="text-sm text-muted-foreground">
+                                {selectedFile?.name}
+                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setSelectedFile(null);
+                                  setImagePreview(null);
+                                  const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+                                  if (fileInput) fileInput.value = "";
+                                }}
+                              >
+                                Değiştir
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <ImageIcon className="w-12 h-12 text-muted-foreground mb-2" />
+                              <p className="text-sm font-medium">Dosya seçmek için tıklayın</p>
+                              <p className="text-xs text-muted-foreground">
+                                PNG, JPG, WEBP (Max 10MB)
+                              </p>
+                            </>
+                          )}
+                        </label>
+                      </div>
+                      {uploadingImage && (
+                        <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                          <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                          Görsel yükleniyor...
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Preview */}
+                  <div className="mt-4">
+                    <Label className="text-sm text-muted-foreground mb-2 block">Önizleme</Label>
+                    <div className="w-32 h-32 rounded-lg overflow-hidden bg-muted border border-border">
+                      {imageUploadMethod === "file" && imagePreview ? (
+                        <img
+                          src={imagePreview}
+                          alt="Preview"
+                          className="w-full h-full object-contain p-2"
+                        />
+                      ) : (
+                        <img
+                          src={getProductImage(editingProduct?.image_url || null, editingProduct?.category || "")}
+                          alt="Preview"
+                          className="w-full h-full object-contain p-2"
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1136,6 +1344,9 @@ export default function AdminProducts() {
                 onClick={() => {
                   setShowModal(false);
                   setEditingProduct(null);
+                  setSelectedFile(null);
+                  setImagePreview(null);
+                  setImageUploadMethod("url");
                   setActiveTab("basic");
                 }}
               >
@@ -1144,9 +1355,9 @@ export default function AdminProducts() {
               <Button
                 className="flex-1"
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || uploadingImage}
               >
-                {saving ? (
+                {saving || uploadingImage ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <>
