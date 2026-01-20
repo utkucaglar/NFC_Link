@@ -56,7 +56,7 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
         }
 
         const response = await fetch(
-          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url&is_active=eq.true&order=id.asc`,
+          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url&is_active=eq.true&order=sort_order.asc`,
           {
             method: 'GET',
             headers: {

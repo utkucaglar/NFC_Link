@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { 
   getProductImage, 
   getProductImageByColor,
+  getProductImagesByColor,
   formatPrice,
   DEFAULT_FEATURES, 
   DEFAULT_SPECS, 
@@ -88,6 +89,8 @@ export default function ProductDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentProductImage, setCurrentProductImage] = useState<string>("");
+  const [productImages, setProductImages] = useState<string[]>([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
   
   // Customization form state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -171,9 +174,9 @@ export default function ProductDetail() {
     }
   }, [product?.id, user]);
 
-  // Renk seçildiğinde görseli güncelle
+  // Renk seçildiğinde görselleri güncelle
   useEffect(() => {
-    const updateProductImage = async () => {
+    const updateProductImages = async () => {
       if (!product) return;
       
       const colors = product.colors?.length
@@ -182,18 +185,28 @@ export default function ProductDetail() {
       
       const selectedColorName = colors[selectedColor] || colors[0];
       
-      const imageUrl = await getProductImageByColor(
+      // Tüm görselleri getir (sort_order'a göre sıralı)
+      const images = await getProductImagesByColor(
         product.id,
         selectedColorName,
         product.image_url,
         product.category
       );
       
-      setCurrentProductImage(imageUrl);
+      setProductImages(images);
+      setCurrentImageIndex(0);
+      setCurrentProductImage(images[0] || getProductImage(product.image_url, product.category));
     };
 
-    updateProductImage();
+    updateProductImages();
   }, [product, selectedColor]);
+
+  // Görsel değiştiğinde currentProductImage'i güncelle
+  useEffect(() => {
+    if (productImages.length > 0 && currentImageIndex < productImages.length) {
+      setCurrentProductImage(productImages[currentImageIndex]);
+    }
+  }, [currentImageIndex, productImages]);
 
   const fetchReviews = async () => {
     if (!product?.id) return;
@@ -509,13 +522,55 @@ export default function ProductDetail() {
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
-              className="bg-muted/30 rounded-3xl p-8 lg:p-12 flex items-center justify-center"
+              className="bg-muted/30 rounded-3xl p-8 lg:p-12 flex flex-col items-center justify-center relative"
             >
               <img
-                src={productImage}
+                src={currentProductImage}
                 alt={product.name}
                 className="w-full max-w-md object-contain"
               />
+              
+              {/* Image Pagination Dots */}
+              {productImages.length > 1 && (
+                <div className="flex gap-2 mt-6">
+                  {productImages.map((_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentImageIndex(index)}
+                      className={`w-2 h-2 rounded-full transition-all ${
+                        currentImageIndex === index
+                          ? "bg-primary w-8"
+                          : "bg-muted-foreground/30 hover:bg-muted-foreground/50"
+                      }`}
+                      aria-label={`Görsel ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
+              
+              {/* Navigation Arrows */}
+              {productImages.length > 1 && (
+                <>
+                  <button
+                    onClick={() => setCurrentImageIndex((prev) => 
+                      prev > 0 ? prev - 1 : productImages.length - 1
+                    )}
+                    className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-background/80 hover:bg-background border border-border flex items-center justify-center transition-all hover:scale-110"
+                    aria-label="Önceki görsel"
+                  >
+                    <ChevronRight className="w-5 h-5 rotate-180" />
+                  </button>
+                  <button
+                    onClick={() => setCurrentImageIndex((prev) => 
+                      prev < productImages.length - 1 ? prev + 1 : 0
+                    )}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-background/80 hover:bg-background border border-border flex items-center justify-center transition-all hover:scale-110"
+                    aria-label="Sonraki görsel"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </>
+              )}
             </motion.div>
 
             {/* Product Info */}

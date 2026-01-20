@@ -79,6 +79,44 @@ export const getProductImageByColor = async (
 };
 
 /**
+ * Ürünün belirli bir rengi için tüm görselleri getirir (sort_order'a göre sıralı)
+ * @returns Görsel URL'lerinin dizisi (sort_order'a göre sıralı)
+ */
+export const getProductImagesByColor = async (
+  productId: number,
+  color: string,
+  fallbackImageUrl: string | null | undefined,
+  categoryOrName: string
+): Promise<string[]> => {
+  try {
+    // product_images tablosundan renge özel tüm görselleri ara
+    const { data: productImages, error } = await supabase
+      .from("product_images")
+      .select("image_url")
+      .eq("product_id", productId)
+      .eq("color", color)
+      .order("sort_order", { ascending: true });
+
+    if (!error && productImages && productImages.length > 0) {
+      // Sadece geçerli image_url'leri filtrele
+      const validImages = productImages
+        .map(img => img.image_url)
+        .filter((url): url is string => !!url);
+      
+      if (validImages.length > 0) {
+        return validImages;
+      }
+    }
+
+    // Renk bazlı görsel yoksa, fallback görseli tek elemanlı dizi olarak döndür
+    return [getProductImage(fallbackImageUrl, categoryOrName)];
+  } catch (error) {
+    console.error("Renk bazlı görseller getirilemedi:", error);
+    return [getProductImage(fallbackImageUrl, categoryOrName)];
+  }
+};
+
+/**
  * Fiyatı Türk Lirası formatında döndürür
  */
 export const formatPrice = (price: number): string => {
