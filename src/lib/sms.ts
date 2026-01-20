@@ -70,11 +70,24 @@ export const getSmsSettings = async (): Promise<SmsSettings | null> => {
       .from("site_settings")
       .select("value")
       .eq("key", "sms_settings")
-      .single();
+      .maybeSingle(); // single() yerine maybeSingle() kullan - 406 hatasını önler
 
-    if (error || !data) return null;
-    return JSON.parse(data.value) as SmsSettings;
-  } catch {
+    if (error) {
+      // 406 veya diğer hataları sessizce yok say
+      console.warn("SMS ayarları alınamadı:", error.message);
+      return null;
+    }
+    
+    if (!data || !data.value) return null;
+    
+    try {
+      return JSON.parse(data.value) as SmsSettings;
+    } catch (parseError) {
+      console.warn("SMS ayarları parse edilemedi:", parseError);
+      return null;
+    }
+  } catch (err) {
+    // Tüm hataları sessizce yok say
     return null;
   }
 };
