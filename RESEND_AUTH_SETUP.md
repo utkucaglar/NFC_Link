@@ -34,16 +34,41 @@ Supabase'in confirmation token'larını frontend'den direkt alamayız. Bu yüzde
 
 ## 🎯 Production İçin Önerilen Yaklaşım
 
-### Seçenek 1: Supabase Email Hook (Önerilen)
+### Seçenek 1: Custom SMTP (Önerilen - En Kolay) ⭐
 
-Supabase Dashboard'da email hook ayarlayarak tüm auth email'lerini Resend'e yönlendirin.
+Supabase'i Resend SMTP kullanacak şekilde ayarlayın. Bu sayede tüm auth email'leri otomatik olarak Resend üzerinden gider.
+
+**Detaylı rehber için:** `RESEND_SMTP_SETUP.md` dosyasına bakın.
+
+#### Hızlı Kurulum:
+
+1. **Supabase Dashboard → Settings → Auth → SMTP Settings**
+2. **"Enable Custom SMTP"** seçeneğini açın
+3. SMTP bilgilerini doldurun:
+   ```
+   Host: smtp.resend.com
+   Port: 465
+   Username: resend
+   Password: [Resend API Key'iniz]
+   Sender Email: noreply@noreply.esdodesign.com
+   ```
+4. Kaydedin
+
+Bu ayarlardan sonra tüm auth email'leri Resend üzerinden otomatik gönderilir!
+
+---
+
+### Seçenek 2: Supabase Email Hook (Alternatif)
+
+Supabase Dashboard'da "Send Email Hook" ayarlayarak tüm auth email'lerini Resend'e yönlendirin.
 
 #### Adımlar:
 
-1. **Supabase Dashboard → Settings → Auth → Email Templates**
-2. Email template'lerini özelleştirin (ama email'i Resend ile göndermek için hook gerekli)
-3. **Supabase Dashboard → Settings → Auth → Hooks** (eğer varsa)
-4. Veya **Supabase Edge Function** kullanın
+1. **Supabase Dashboard → Settings → Auth → Auth Hooks**
+2. **"Send Email Hook"** bölümüne gidin
+3. Hook type: **HTTP(S)** seçin
+4. Hook URL: Edge Function URL'inizi girin
+5. Secret oluşturun ve kaydedin
 
 #### Supabase Edge Function ile:
 
@@ -52,7 +77,7 @@ Supabase Dashboard'da email hook ayarlayarak tüm auth email'lerini Resend'e yö
    supabase functions deploy auth-email
    ```
 
-2. Supabase Dashboard'da email hook ayarlayın (eğer destekleniyorsa)
+2. Hook URL'ini Supabase Dashboard'a ekleyin
 
 ---
 

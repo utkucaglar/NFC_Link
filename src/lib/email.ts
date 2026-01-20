@@ -229,6 +229,30 @@ export const EMAIL_TEMPLATES = {
       <p>Saygılarımızla,<br><strong>Esdodesign Ekibi</strong></p>
     `)
   }),
+
+  // Yeni Destek Talebi (Admin'e Bildirim)
+  SUPPORT_NEW_TICKET: (ticketNumber: string, subject: string, category: string, customerName: string, customerEmail: string, message: string): EmailTemplate => ({
+    subject: `Yeni Destek Talebi - #${ticketNumber}`,
+    html: baseTemplate(`
+      <h2>Yeni Destek Talebi Alındı! 🔔</h2>
+      <p>Merhaba,</p>
+      <p><strong>#${ticketNumber}</strong> numaralı yeni bir destek talebi oluşturuldu.</p>
+      
+      <div class="info-box">
+        <h3 style="margin-top: 0;">Talep Detayları</h3>
+        <p><strong>Konu:</strong> ${subject}</p>
+        <p><strong>Kategori:</strong> ${category}</p>
+        <p><strong>Müşteri:</strong> ${customerName} (${customerEmail})</p>
+        <p><strong>Mesaj:</strong></p>
+        <p style="background: #fff; padding: 15px; border-radius: 8px; border-left: 3px solid #6366f1; margin-top: 10px;">${message}</p>
+      </div>
+
+      <p>Talep detaylarını görüntülemek ve yanıtlamak için:</p>
+      <a href="https://esdodesign.com/admin/support" class="button">Destek Paneline Git</a>
+      
+      <p>Saygılarımızla,<br><strong>Esdodesign Destek Sistemi</strong></p>
+    `)
+  }),
 };
 
 // =================================================
@@ -389,6 +413,75 @@ export const sendEmailConfirmation = async (
 // Şifre sıfırlama emaili gönder
 export const sendPasswordResetEmail = async (email: string, resetLink: string) => {
   return sendEmail(email, EMAIL_TEMPLATES.PASSWORD_RESET(resetLink));
+};
+
+// Yeni destek talebi bildirimi (Admin'lere)
+export const sendNewTicketNotificationToAdmins = async (
+  ticketNumber: string,
+  subject: string,
+  category: string,
+  customerName: string,
+  customerEmail: string,
+  message: string
+) => {
+  try {
+    // Admin email'lerini al
+    const { data: admins, error } = await supabase
+      .from("user_profiles")
+      .select("email, first_name")
+      .eq("role", "admin");
+
+    if (error) {
+      console.error("Admin email'leri alınamadı:", error);
+      return { success: false, error: "Admin email'leri alınamadı" };
+    }
+
+    if (!admins || admins.length === 0) {
+      console.log("Admin kullanıcı bulunamadı");
+      return { success: false, error: "Admin kullanıcı bulunamadı" };
+    }
+
+    // Kategori label'ını al
+    const categoryLabels: Record<string, string> = {
+      general: "Genel Bilgi",
+      order: "Sipariş Hakkında",
+      technical: "Teknik Destek",
+      billing: "Ödeme/Fatura",
+      other: "Diğer",
+    };
+    const categoryLabel = categoryLabels[category] || category;
+
+    // Her admin'e email gönder
+    const results = await Promise.allSettled(
+      admins.map((admin) =>
+        sendEmail(
+          admin.email,
+          EMAIL_TEMPLATES.SUPPORT_NEW_TICKET(
+            ticketNumber,
+            subject,
+            categoryLabel,
+            customerName,
+            customerEmail,
+            message
+          )
+        )
+      )
+    );
+
+    const successCount = results.filter((r) => r.status === "fulfilled" && r.value.success).length;
+    const failedCount = results.length - successCount;
+
+    console.log(`Admin bildirimleri: ${successCount} başarılı, ${failedCount} başarısız`);
+
+    return {
+      success: successCount > 0,
+      sentCount: successCount,
+      failedCount,
+    };
+  } catch (error: any) {
+    console.error("Admin bildirimi hatası:", error);
+    return { success: false, error: error.message || "Beklenmeyen hata" };
+  }
 };
 
 // Test emaili

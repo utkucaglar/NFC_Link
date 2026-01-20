@@ -29,6 +29,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { Link } from "react-router-dom";
+import { sendNewTicketNotificationToAdmins } from "@/lib/email";
 
 interface SupportTicket {
   id: string;
@@ -245,6 +246,24 @@ export default function Contact() {
         await supabase.from("support_tickets").delete().eq("id", ticketData.id);
         toast.error("Mesaj eklenemedi. Lütfen tekrar deneyin.");
         throw messageError;
+      }
+
+      // Admin'lere email bildirimi gönder
+      try {
+        const customerName = profile?.full_name || `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim() || "Müşteri";
+        const customerEmail = profile?.email || user?.email || "";
+        
+        await sendNewTicketNotificationToAdmins(
+          ticketData.ticket_number,
+          newSubject.trim(),
+          newCategory,
+          customerName,
+          customerEmail,
+          newMessage.trim()
+        );
+      } catch (emailError) {
+        console.error("Admin bildirimi gönderilemedi:", emailError);
+        // Email hatası olsa bile ticket oluşturuldu, kullanıcıya hata gösterme
       }
 
       toast.success("Destek talebiniz oluşturuldu!");
