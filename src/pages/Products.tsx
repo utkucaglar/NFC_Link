@@ -8,11 +8,17 @@ import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
 import { toast } from "sonner";
 import { getProductImage } from "@/lib/helpers";
+import { supabase } from "@/lib/supabase";
 
 // Kişiselleştirme gerektiren kategoriler (tüm NFC ürünleri)
-const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik"];
+const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik", "Dijital Kartvizit", "Dijital Anı Defteri"];
 
-const categories = ["Tümü", "Profesyonel", "Spor & Etkinlik", "Evcil Hayvan"];
+interface Category {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+}
 
 interface Product {
   id: number;
@@ -29,6 +35,7 @@ export default function Products() {
   const [selectedCategory, setSelectedCategory] = useState("Tümü");
   const [searchQuery, setSearchQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { addToCart } = useCart();
@@ -62,84 +69,70 @@ export default function Products() {
     }
   };
 
-  // Fetch products from Supabase - Native fetch API kullanarak (Chrome uyumluluğu için)
+  // Fetch products and categories from Supabase
   useEffect(() => {
     let isMounted = true;
-    const controller = new AbortController();
 
-    const fetchProducts = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        // Kategorileri getir
+        const { data: categoriesData, error: categoriesError } = await supabase
+          .from("categories")
+          .select("*")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true });
 
-        if (!supabaseUrl || !supabaseKey) {
-          throw new Error('Supabase yapılandırması eksik');
+        if (categoriesError) {
+          console.error("Kategoriler yüklenemedi:", categoriesError);
+        } else if (categoriesData && isMounted) {
+          setCategories(categoriesData);
         }
 
-        console.log('Fetching products with native fetch...');
-        
-        // Native fetch API kullan - Supabase client yerine
-        const response = await fetch(
-          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url,monthly_subscription_fee&is_active=eq.true&order=sort_order.asc`,
-          {
-            method: 'GET',
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
-            },
-            signal: controller.signal
-          }
-        );
+        // Ürünleri getir
+        const { data: productsData, error: productsError } = await supabase
+          .from("products")
+          .select("id, name, description, price, category, image_url, monthly_subscription_fee")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true });
 
-        // Component unmount olduysa state güncelleme yapma
         if (!isMounted) {
           console.log('Component unmounted, skipping state update');
           return;
         }
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('Fetch error:', response.status, errorText);
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        if (productsError) {
+          throw productsError;
         }
 
-        const data = await response.json();
-        console.log('Fetch response:', data);
-
-        if (!data || data.length === 0) {
+        if (!productsData || productsData.length === 0) {
           setError('Veritabanında ürün bulunamadı. SQL dosyalarını çalıştırdığınızdan emin olun.');
           toast.warning('Veritabanında ürün yok');
           setLoading(false);
           return;
         }
 
-        setProducts(data);
-        setLoading(false);
-        console.log(`${data.length} ürün yüklendi`);
+        setProducts(productsData);
+        console.log(`${productsData.length} ürün yüklendi`);
       } catch (err: any) {
         if (!isMounted) return;
-        if (err.name === 'AbortError') {
-          console.log('Fetch aborted');
-          return;
-        }
-        console.error('Error fetching products:', err);
+        console.error('Error fetching data:', err);
         setError(`Bağlantı hatası: ${err.message}`);
-        toast.error('Ürünler yüklenemedi');
-        setLoading(false);
+        toast.error('Veriler yüklenemedi');
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
-    fetchProducts();
+    fetchData();
 
-    // Cleanup function - component unmount olduğunda çalışır
+    // Cleanup function
     return () => {
       isMounted = false;
-      controller.abort();
     };
   }, []);
 
@@ -231,14 +224,21 @@ export default function Products() {
 
             {/* Category Filter */}
             <div className="flex gap-2 flex-wrap">
+              <Button
+                variant={selectedCategory === "Tümü" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedCategory("Tümü")}
+              >
+                Tümü
+              </Button>
               {categories.map(category => (
                 <Button
-                  key={category}
-                  variant={selectedCategory === category ? "default" : "outline"}
+                  key={category.id}
+                  variant={selectedCategory === category.name ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setSelectedCategory(category)}
+                  onClick={() => setSelectedCategory(category.name)}
                 >
-                  {category}
+                  {category.name}
                 </Button>
               ))}
             </div>
