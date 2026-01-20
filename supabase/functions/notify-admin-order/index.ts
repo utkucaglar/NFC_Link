@@ -50,17 +50,25 @@ Deno.serve(async (req) => {
         .from("site_settings")
         .select("value")
         .eq("key", "email_settings")
-        .single();
+        .maybeSingle(); // single() yerine maybeSingle() kullan - 406 hatasını önler
 
-      if (!settingsError && emailSettings) {
-        const settings = JSON.parse(emailSettings.value);
-        if (settings.from_email && settings.from_name) {
-          fromEmail = `${settings.from_name} <${settings.from_email}>`;
-          console.log(`📧 Email ayarlarından from adresi alındı: ${fromEmail}`);
+      if (settingsError) {
+        console.warn("⚠️ Email ayarları alınamadı:", settingsError.message);
+      } else if (emailSettings && emailSettings.value) {
+        try {
+          const settings = JSON.parse(emailSettings.value);
+          if (settings.from_email && settings.from_name) {
+            fromEmail = `${settings.from_name} <${settings.from_email}>`;
+            console.log(`📧 Email ayarlarından from adresi alındı: ${fromEmail}`);
+          }
+        } catch (parseError) {
+          console.warn("⚠️ Email ayarları parse edilemedi:", parseError);
         }
+      } else {
+        console.warn("⚠️ Email ayarları bulunamadı, varsayılan kullanılıyor");
       }
-    } catch (err) {
-      console.warn("⚠️ Email ayarları alınamadı, varsayılan kullanılıyor:", err);
+    } catch (err: any) {
+      console.warn("⚠️ Email ayarları alınamadı, varsayılan kullanılıyor:", err?.message || err);
     }
 
     // Admin email'lerini al (RLS bypass ile) - TÜM admin'leri al
@@ -164,9 +172,19 @@ Deno.serve(async (req) => {
 </html>
     `;
 
-    // Her admin'e email gönder
-    const results = await Promise.allSettled(
-      admins.map(async (admin) => {
+    // Her admin'e email gönder (rate limit'i önlemek için sıralı gönderim)
+    const results = [];
+    for (let i = 0; i < admins.length; i++) {
+      const admin = admins[i];
+      
+      // İlk email hariç, her email arasında 500ms bekle (rate limit önleme)
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      try {
+        console.log(`📧 ${admin.email} için email gönderiliyor... (${i + 1}/${admins.length})`);
+        
         const response = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
@@ -184,13 +202,43 @@ Deno.serve(async (req) => {
         const result = await response.json();
 
         if (!response.ok) {
-          throw new Error(result.message || result.error || "Failed to send email");
+          // 429 (rate limit) hatası için özel mesaj
+          if (response.status === 429) {
+            console.error(`⏱️ ${admin.email} rate limit hatası, bekleniyor...`);
+            // Rate limit hatası alırsa 2 saniye bekle ve tekrar dene
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Tekrar dene (sadece bir kez)
+            const retryResponse = await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${RESEND_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                from: fromEmail,
+                to: [admin.email],
+                subject: `Yeni Sipariş - #${body.orderNumber}`,
+                html: emailHtml,
+              }),
+            });
+            const retryResult = await retryResponse.json();
+            if (!retryResponse.ok) {
+              throw new Error(retryResult.message || retryResult.error || "Failed to send email after retry");
+            }
+            console.log(`✅ ${admin.email} email gönderildi (retry), id:`, retryResult.id);
+            results.push({ status: "fulfilled", value: { success: true, id: retryResult.id, email: admin.email } });
+          } else {
+            throw new Error(result.message || result.error || "Failed to send email");
+          }
+        } else {
+          console.log(`✅ ${admin.email} email gönderildi, id:`, result.id);
+          results.push({ status: "fulfilled", value: { success: true, id: result.id, email: admin.email } });
         }
-
-        console.log(`✅ ${admin.email} email gönderildi, id:`, result.id);
-        return { success: true, id: result.id, email: admin.email };
-      })
-    );
+      } catch (error: any) {
+        console.error(`❌ ${admin.email} email gönderilemedi:`, error.message);
+        results.push({ status: "rejected", reason: error });
+      }
+    }
 
     const successCount = results.filter((r) => r.status === "fulfilled").length;
     const failedCount = results.length - successCount;
