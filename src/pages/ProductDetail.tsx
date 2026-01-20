@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { 
   getProductImage, 
+  getProductImageByColor,
   formatPrice,
   DEFAULT_FEATURES, 
   DEFAULT_SPECS, 
@@ -86,6 +87,7 @@ export default function ProductDetail() {
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentProductImage, setCurrentProductImage] = useState<string>("");
   
   // Customization form state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -168,6 +170,30 @@ export default function ProductDetail() {
       checkCanReview();
     }
   }, [product?.id, user]);
+
+  // Renk seçildiğinde görseli güncelle
+  useEffect(() => {
+    const updateProductImage = async () => {
+      if (!product) return;
+      
+      const colors = product.colors?.length
+        ? product.colors
+        : DEFAULT_COLORS[product.category] || ["Standart"];
+      
+      const selectedColorName = colors[selectedColor] || colors[0];
+      
+      const imageUrl = await getProductImageByColor(
+        product.id,
+        selectedColorName,
+        product.image_url,
+        product.category
+      );
+      
+      setCurrentProductImage(imageUrl);
+    };
+
+    updateProductImage();
+  }, [product, selectedColor]);
 
   const fetchReviews = async () => {
     if (!product?.id) return;
@@ -370,7 +396,8 @@ export default function ProductDetail() {
     ? product.colors
     : DEFAULT_COLORS[product.category] || ["Standart"];
   
-  const productImage = getProductImage(product.image_url, product.category);
+  // İlk yüklemede görseli ayarla
+  const productImage = currentProductImage || getProductImage(product.image_url, product.category);
   const longDescription = product.long_description || product.description || "Profesyonel NFC çözümü ile dijital varlığınızı paylaşın.";
   
   // NFC tipi belirleme

@@ -15,7 +15,6 @@ import {
   Pencil,
   Check,
   Upload,
-  Link as LinkIcon,
   Image as ImageIcon,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -123,14 +122,34 @@ export default function AdminProducts() {
   const [editingSpecValueValue, setEditingSpecValueValue] = useState("");
   
   // Image upload state'leri
-  const [imageUploadMethod, setImageUploadMethod] = useState<"url" | "file">("url");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  
+  // Renk bazlı görsel state'leri - her renk için birden fazla görsel
+  interface ColorImage {
+    id?: number; // Veritabanından gelen ID (varsa)
+    image_url: string;
+    sort_order: number;
+    tempId?: string; // Yeni eklenen görseller için geçici ID
+  }
+  const [colorImages, setColorImages] = useState<Record<string, ColorImage[]>>({});
+  const [uploadingColorImages, setUploadingColorImages] = useState<Record<string, boolean>>({});
+  const [colorImagePreviews, setColorImagePreviews] = useState<Record<string, Record<string, string>>>({});
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Ürün düzenlenirken renk görsellerini yükle
+  useEffect(() => {
+    if (editingProduct?.id) {
+      loadColorImages(editingProduct.id);
+    } else {
+      setColorImages({});
+      setColorImagePreviews({});
+    }
+  }, [editingProduct?.id]);
 
   const fetchData = async () => {
     try {
@@ -227,6 +246,239 @@ export default function AdminProducts() {
     }
   };
 
+  // Renk bazlı görsel yükleme - birden fazla görsel eklenebilir
+  const handleColorImageSelect = async (color: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    console.log("handleColorImageSelect called", { color, files: e.target.files });
+    const file = e.target.files?.[0];
+    if (!file) {
+      console.log("No file selected");
+      // Input'u resetle
+      e.target.value = '';
+      return;
+    }
+    
+    console.log("File selected:", { name: file.name, size: file.size, type: file.type });
+
+    // Dosya tipi kontrolü
+    if (!file.type.startsWith('image/')) {
+      toast.error("Lütfen bir resim dosyası seçin");
+      e.target.value = '';
+      return;
+    }
+    
+    // Dosya boyutu kontrolü (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("Dosya boyutu 10MB'dan küçük olmalıdır");
+      e.target.value = '';
+      return;
+    }
+
+    // Preview oluştur
+    const tempId = `temp-${Date.now()}-${Math.random()}`;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setColorImagePreviews(prev => ({
+        ...prev,
+        [color]: {
+          ...(prev[color] || {}),
+          [tempId]: reader.result as string
+        }
+      }));
+    };
+    reader.readAsDataURL(file);
+
+    // Görseli yükle
+    try {
+      setUploadingColorImages(prev => ({ ...prev, [color]: true }));
+      
+      const productId = editingProduct?.id || `temp-${Date.now()}`;
+      const fileExt = file.name.split('.').pop();
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(7);
+      const fileName = `products/${productId}/colors/${color}/${timestamp}-${random}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+      
+      if (uploadError) {
+        console.error("Upload error:", uploadError);
+        throw uploadError;
+      }
+      
+      const { data: urlData } = supabase.storage.from("product-images").getPublicUrl(fileName);
+      
+      if (!urlData?.publicUrl) {
+        throw new Error("Görsel URL'i alınamadı");
+      }
+      
+      // Array'e ekle
+      setColorImages(prev => {
+        const currentImages = prev[color] || [];
+        const maxSortOrder = currentImages.length > 0 
+          ? Math.max(...currentImages.map(img => img.sort_order))
+          : -1;
+        
+        const newImage = {
+          image_url: urlData.publicUrl,
+          sort_order: maxSortOrder + 1,
+          tempId
+        };
+        
+        console.log(`Adding image to ${color}:`, newImage);
+        console.log(`Current images for ${color}:`, currentImages);
+        
+        return {
+          ...prev,
+          [color]: [
+            ...currentImages,
+            newImage
+          ]
+        };
+      });
+      
+      toast.success(`${color} rengi için görsel yüklendi`);
+    } catch (error: any) {
+      console.error("Renk görseli yükleme hatası:", error);
+      toast.error(`${color} rengi için görsel yüklenemedi: ${error.message || 'Bilinmeyen hata'}`);
+      // Preview'ı da sil
+      setColorImagePreviews(prev => {
+        const newPreviews = { ...prev };
+        if (newPreviews[color]) {
+          delete newPreviews[color][tempId];
+        }
+        return newPreviews;
+      });
+    } finally {
+      setUploadingColorImages(prev => ({ ...prev, [color]: false }));
+      // Input'u resetle - aynı dosyayı tekrar seçebilmek için
+      e.target.value = '';
+    }
+  };
+
+
+  // Belirli bir renk görselini sil
+  const removeColorImage = async (color: string, imageIndex: number) => {
+    const images = colorImages[color] || [];
+    const imageToRemove = images[imageIndex];
+    if (!imageToRemove) return;
+
+    try {
+      // Eğer ürün kaydedilmişse ve görsel Supabase storage'da ise sil
+      if (editingProduct?.id && imageToRemove.id && imageToRemove.image_url.includes('/storage/v1/object/public/')) {
+        const pathMatch = imageToRemove.image_url.match(/\/storage\/v1\/object\/public\/product-images\/(.+)/);
+        if (pathMatch) {
+          await supabase.storage.from("product-images").remove([pathMatch[1]]);
+        }
+
+        // product_images tablosundan sil
+        await supabase
+          .from("product_images")
+          .delete()
+          .eq("id", imageToRemove.id);
+      } else if (imageToRemove.image_url.includes('/storage/v1/object/public/')) {
+        // Henüz kaydedilmemiş ama yüklenmiş görsel
+        const pathMatch = imageToRemove.image_url.match(/\/storage\/v1\/object\/public\/product-images\/(.+)/);
+        if (pathMatch) {
+          await supabase.storage.from("product-images").remove([pathMatch[1]]);
+        }
+      }
+
+      // State'ten sil
+      setColorImages(prev => {
+        const newImages = { ...prev };
+        if (newImages[color]) {
+          newImages[color] = newImages[color].filter((_, idx) => idx !== imageIndex);
+          if (newImages[color].length === 0) {
+            delete newImages[color];
+          }
+        }
+        return newImages;
+      });
+
+      // Preview'ı da sil
+      if (imageToRemove.tempId) {
+        setColorImagePreviews(prev => {
+          const newPreviews = { ...prev };
+          if (newPreviews[color]) {
+            delete newPreviews[color][imageToRemove.tempId!];
+          }
+          return newPreviews;
+        });
+      }
+
+      toast.success("Görsel silindi");
+    } catch (error) {
+      console.error("Renk görseli silme hatası:", error);
+      toast.error("Görsel silinemedi");
+    }
+  };
+
+  // Görsel sıralamasını değiştir
+  const moveColorImage = (color: string, imageIndex: number, direction: 'up' | 'down') => {
+    setColorImages(prev => {
+      const images = [...(prev[color] || [])];
+      const newIndex = direction === 'up' ? imageIndex - 1 : imageIndex + 1;
+      
+      if (newIndex < 0 || newIndex >= images.length) return prev;
+      
+      // sort_order'ları değiştir
+      const temp = images[imageIndex].sort_order;
+      images[imageIndex].sort_order = images[newIndex].sort_order;
+      images[newIndex].sort_order = temp;
+      
+      // Array'i yeniden sırala
+      images.sort((a, b) => a.sort_order - b.sort_order);
+      
+      return {
+        ...prev,
+        [color]: images
+      };
+    });
+  };
+
+  // Ürün düzenlenirken renk görsellerini yükle
+  const loadColorImages = async (productId: number) => {
+    try {
+      const { data, error } = await supabase
+        .from("product_images")
+        .select("id, color, image_url, sort_order")
+        .eq("product_id", productId)
+        .order("sort_order", { ascending: true });
+
+      if (error) throw error;
+
+      const imagesMap: Record<string, ColorImage[]> = {};
+      data?.forEach(item => {
+        if (!imagesMap[item.color]) {
+          imagesMap[item.color] = [];
+        }
+        imagesMap[item.color].push({
+          id: item.id,
+          image_url: item.image_url,
+          sort_order: item.sort_order
+        });
+      });
+
+      setColorImages(imagesMap);
+      
+      // Preview'ları da ayarla
+      const previewsMap: Record<string, Record<string, string>> = {};
+      Object.entries(imagesMap).forEach(([color, images]) => {
+        previewsMap[color] = {};
+        images.forEach(img => {
+          if (img.tempId) {
+            previewsMap[color][img.tempId] = img.image_url;
+          }
+        });
+      });
+      setColorImagePreviews(previewsMap);
+    } catch (error) {
+      console.error("Renk görselleri yüklenemedi:", error);
+    }
+  };
+
   const handleSave = async () => {
     if (!editingProduct?.name || !editingProduct?.price || !editingProduct?.category) {
       toast.error("Lütfen zorunlu alanları doldurun (Ad, Fiyat, Kategori)");
@@ -237,8 +489,8 @@ export default function AdminProducts() {
     try {
       let imageUrl = editingProduct.image_url || null;
       
-      // Dosya yükleme modundaysa ve dosya seçilmişse yükle
-      if (imageUploadMethod === "file" && selectedFile) {
+      // Dosya seçilmişse yükle
+      if (selectedFile) {
         const uploadedUrl = await uploadImageFile(selectedFile);
         if (uploadedUrl) {
           imageUrl = uploadedUrl;
@@ -269,6 +521,8 @@ export default function AdminProducts() {
         updated_at: new Date().toISOString(),
       };
 
+      let savedProductId: number;
+
       if (editingProduct.id) {
         const { error } = await supabase
           .from("products")
@@ -276,24 +530,76 @@ export default function AdminProducts() {
           .eq("id", editingProduct.id);
 
         if (error) throw error;
+        savedProductId = editingProduct.id;
         toast.success("Ürün güncellendi");
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from("products")
           .insert({
             ...productData,
             created_at: new Date().toISOString(),
-          });
+          })
+          .select("id")
+          .single();
 
         if (error) throw error;
+        savedProductId = data.id;
         toast.success("Ürün oluşturuldu");
+      }
+
+      // Renk görsellerini kaydet - her renk için birden fazla görsel
+      if (Object.keys(colorImages).length > 0 && savedProductId) {
+        // Önce bu ürünün tüm mevcut görsellerini sil
+        await supabase
+          .from("product_images")
+          .delete()
+          .eq("product_id", savedProductId);
+
+        // Tüm renk görsellerini ekle
+        const colorImageEntries: Array<{
+          product_id: number;
+          color: string;
+          image_url: string;
+          sort_order: number;
+        }> = [];
+
+        Object.entries(colorImages).forEach(([color, images]) => {
+          images.forEach((img, index) => {
+            colorImageEntries.push({
+              product_id: savedProductId,
+              color,
+              image_url: img.image_url,
+              sort_order: img.sort_order !== undefined ? img.sort_order : index,
+            });
+          });
+        });
+
+        if (colorImageEntries.length > 0) {
+          const { error: imagesError } = await supabase
+            .from("product_images")
+            .insert(colorImageEntries);
+
+          if (imagesError) {
+            console.error("Renk görselleri kaydedilemedi:", imagesError);
+            toast.error("Renk görselleri kaydedilemedi");
+          } else {
+            toast.success(`${colorImageEntries.length} görsel kaydedildi`);
+          }
+        }
+      } else if (savedProductId && Object.keys(colorImages).length === 0) {
+        // Eğer hiç görsel yoksa, mevcut görselleri sil
+        await supabase
+          .from("product_images")
+          .delete()
+          .eq("product_id", savedProductId);
       }
 
       setShowModal(false);
       setEditingProduct(null);
       setSelectedFile(null);
       setImagePreview(null);
-      setImageUploadMethod("url");
+      setColorImages({});
+      setColorImagePreviews({});
       setActiveTab("basic");
       fetchData();
     } catch (error: any) {
@@ -574,7 +880,6 @@ export default function AdminProducts() {
               onClick={() => {
                 setEditingProduct(emptyProduct);
                 setActiveTab("basic");
-                setImageUploadMethod("url");
                 setSelectedFile(null);
                 setImagePreview(null);
                 setShowModal(true);
@@ -699,7 +1004,6 @@ export default function AdminProducts() {
                           specs: product.specs || {},
                         });
                         setActiveTab("basic");
-                        setImageUploadMethod("url");
                         setSelectedFile(null);
                         setImagePreview(null);
                         setShowModal(true);
@@ -897,114 +1201,69 @@ export default function AdminProducts() {
                 <div>
                   <Label className="mb-3 block">Ürün Görseli</Label>
                   
-                  {/* Yöntem Seçimi */}
-                  <div className="flex gap-2 mb-4">
-                    <Button
-                      type="button"
-                      variant={imageUploadMethod === "url" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => {
-                        setImageUploadMethod("url");
-                        setSelectedFile(null);
-                        setImagePreview(null);
-                      }}
-                      className="flex-1"
-                    >
-                      <LinkIcon className="w-4 h-4 mr-2" />
-                      URL ile Ekle
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={imageUploadMethod === "file" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => {
-                        setImageUploadMethod("file");
-                        setEditingProduct({ ...editingProduct, image_url: "" });
-                      }}
-                      className="flex-1"
-                    >
-                      <Upload className="w-4 h-4 mr-2" />
-                      Dosyadan Yükle
-                    </Button>
-                  </div>
-
-                  {/* URL Input */}
-                  {imageUploadMethod === "url" && (
-                    <div>
-                      <Input
-                        id="image"
-                        value={editingProduct?.image_url || ""}
-                        onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })}
-                        placeholder="https://example.com/image.jpg"
-                      />
-                    </div>
-                  )}
-
                   {/* File Input */}
-                  {imageUploadMethod === "file" && (
-                    <div>
-                      <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
-                        <input
-                          type="file"
-                          id="file-upload"
-                          accept="image/*"
-                          onChange={handleFileSelect}
-                          className="hidden"
-                        />
-                        <label
-                          htmlFor="file-upload"
-                          className="cursor-pointer flex flex-col items-center gap-2"
-                        >
-                          {imagePreview ? (
-                            <>
-                              <img
-                                src={imagePreview}
-                                alt="Preview"
-                                className="w-32 h-32 object-contain rounded-lg mb-2"
-                              />
-                              <p className="text-sm text-muted-foreground">
-                                {selectedFile?.name}
-                              </p>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  setSelectedFile(null);
-                                  setImagePreview(null);
-                                  const fileInput = document.getElementById("file-upload") as HTMLInputElement;
-                                  if (fileInput) fileInput.value = "";
-                                }}
-                              >
-                                Değiştir
-                              </Button>
-                            </>
-                          ) : (
-                            <>
-                              <ImageIcon className="w-12 h-12 text-muted-foreground mb-2" />
-                              <p className="text-sm font-medium">Dosya seçmek için tıklayın</p>
-                              <p className="text-xs text-muted-foreground">
-                                PNG, JPG, WEBP (Max 10MB)
-                              </p>
-                            </>
-                          )}
-                        </label>
-                      </div>
-                      {uploadingImage && (
-                        <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-                          <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                          Görsel yükleniyor...
-                        </div>
-                      )}
+                  <div>
+                    <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
+                      <input
+                        type="file"
+                        id="file-upload"
+                        accept="image/*"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="file-upload"
+                        className="cursor-pointer flex flex-col items-center gap-2"
+                      >
+                        {imagePreview ? (
+                          <>
+                            <img
+                              src={imagePreview}
+                              alt="Preview"
+                              className="w-32 h-32 object-contain rounded-lg mb-2"
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              {selectedFile?.name}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setSelectedFile(null);
+                                setImagePreview(null);
+                                const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+                                if (fileInput) fileInput.value = "";
+                              }}
+                            >
+                              Değiştir
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <ImageIcon className="w-12 h-12 text-muted-foreground mb-2" />
+                            <p className="text-sm font-medium">Dosya seçmek için tıklayın</p>
+                            <p className="text-xs text-muted-foreground">
+                              PNG, JPG, WEBP (Max 10MB)
+                            </p>
+                          </>
+                        )}
+                      </label>
                     </div>
-                  )}
+                    {uploadingImage && (
+                      <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        Görsel yükleniyor...
+                      </div>
+                    )}
+                  </div>
 
                   {/* Preview */}
                   <div className="mt-4">
                     <Label className="text-sm text-muted-foreground mb-2 block">Önizleme</Label>
                     <div className="w-32 h-32 rounded-lg overflow-hidden bg-muted border border-border">
-                      {imageUploadMethod === "file" && imagePreview ? (
+                      {imagePreview ? (
                         <img
                           src={imagePreview}
                           alt="Preview"
@@ -1156,67 +1415,185 @@ export default function AdminProducts() {
                   <Label className="mb-3 block">Renk Seçenekleri</Label>
                   <div className="space-y-2 mb-3">
                     {(editingProduct?.colors || []).map((color, index) => (
-                      <div key={index} className="flex items-center gap-2 bg-muted/30 rounded-lg p-2 group">
-                        {/* Sıralama butonları */}
-                        <div className="flex flex-col gap-0.5">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="w-6 h-6 opacity-50 hover:opacity-100"
-                            onClick={() => moveColor(index, 'up')}
-                            disabled={index === 0}
-                          >
-                            <ArrowUp className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="w-6 h-6 opacity-50 hover:opacity-100"
-                            onClick={() => moveColor(index, 'down')}
-                            disabled={index === (editingProduct?.colors?.length || 0) - 1}
-                          >
-                            <ArrowDown className="w-3 h-3" />
-                          </Button>
-                        </div>
-                        
-                        {/* İçerik - düzenleme modu */}
-                        {editingColorIndex === index ? (
-                          <div className="flex-1 flex gap-2">
-                            <Input
-                              value={editingColorValue}
-                              onChange={(e) => setEditingColorValue(e.target.value)}
-                              onKeyDown={(e) => e.key === "Enter" && saveEditColor()}
-                              autoFocus
-                              className="flex-1"
-                            />
-                            <Button size="icon" variant="ghost" className="w-8 h-8 text-green-600" onClick={saveEditColor}>
-                              <Check className="w-4 h-4" />
+                      <div key={index} className="space-y-2">
+                        <div className="flex items-center gap-2 bg-muted/30 rounded-lg p-2 group">
+                          {/* Sıralama butonları */}
+                          <div className="flex flex-col gap-0.5">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-6 h-6 opacity-50 hover:opacity-100"
+                              onClick={() => moveColor(index, 'up')}
+                              disabled={index === 0}
+                            >
+                              <ArrowUp className="w-3 h-3" />
                             </Button>
-                            <Button size="icon" variant="ghost" className="w-8 h-8" onClick={() => setEditingColorIndex(null)}>
-                              <X className="w-4 h-4" />
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-6 h-6 opacity-50 hover:opacity-100"
+                              onClick={() => moveColor(index, 'down')}
+                              disabled={index === (editingProduct?.colors?.length || 0) - 1}
+                            >
+                              <ArrowDown className="w-3 h-3" />
                             </Button>
                           </div>
-                        ) : (
-                          <>
-                            <span className="flex-1 text-sm font-medium">{color}</span>
+                          
+                          {/* İçerik - düzenleme modu */}
+                          {editingColorIndex === index ? (
+                            <div className="flex-1 flex gap-2">
+                              <Input
+                                value={editingColorValue}
+                                onChange={(e) => setEditingColorValue(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && saveEditColor()}
+                                autoFocus
+                                className="flex-1"
+                              />
+                              <Button size="icon" variant="ghost" className="w-8 h-8 text-green-600" onClick={saveEditColor}>
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="w-8 h-8" onClick={() => setEditingColorIndex(null)}>
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="flex-1 text-sm font-medium">{color}</span>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={() => startEditColor(index)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="w-8 h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={() => removeColor(index)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                        
+                        {/* Renk görseli yükleme - birden fazla görsel */}
+                        <div className="ml-8 bg-muted/20 rounded-lg p-3 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-muted-foreground">{color} rengi için görseller</Label>
+                            <span className="text-xs text-muted-foreground">
+                              {(colorImages[color] || []).length} görsel
+                            </span>
+                          </div>
+                          
+                          {/* Mevcut görseller listesi */}
+                          {(colorImages[color] || []).length > 0 && (
+                            <div className="space-y-2">
+                              {colorImages[color].map((img, imgIndex) => {
+                                const previewUrl = img.tempId 
+                                  ? (colorImagePreviews[color]?.[img.tempId] || img.image_url)
+                                  : img.image_url;
+                                
+                                return (
+                                  <div key={img.id || img.tempId || imgIndex} className="flex items-center gap-3 bg-background rounded-lg p-2 border border-border">
+                                    {/* Sıralama butonları */}
+                                    <div className="flex flex-col gap-0.5">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="w-5 h-5 opacity-50 hover:opacity-100"
+                                        onClick={() => moveColorImage(color, imgIndex, 'up')}
+                                        disabled={imgIndex === 0}
+                                      >
+                                        <ArrowUp className="w-3 h-3" />
+                                      </Button>
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="w-5 h-5 opacity-50 hover:opacity-100"
+                                        onClick={() => moveColorImage(color, imgIndex, 'down')}
+                                        disabled={imgIndex === (colorImages[color]?.length || 0) - 1}
+                                      >
+                                        <ArrowDown className="w-3 h-3" />
+                                      </Button>
+                                    </div>
+                                    
+                                    {/* Görsel önizleme */}
+                                    <img
+                                      src={previewUrl}
+                                      alt={`${color} renk görseli ${imgIndex + 1}`}
+                                      className="w-16 h-16 object-contain rounded border border-border bg-background"
+                                    />
+                                    
+                                    {/* Görsel bilgisi */}
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs text-muted-foreground truncate">
+                                        {img.image_url.length > 50 
+                                          ? `${img.image_url.substring(0, 50)}...` 
+                                          : img.image_url}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Sıra: {img.sort_order + 1}
+                                      </p>
+                                    </div>
+                                    
+                                    {/* Sil butonu */}
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="text-xs text-destructive"
+                                      onClick={() => removeColorImage(color, imgIndex)}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          
+                          {/* Yeni görsel ekleme */}
+                          <div className="pt-2 border-t border-border">
+                            <input
+                              type="file"
+                              id={`color-image-${color}-${index}`}
+                              accept="image/*"
+                              multiple={false}
+                              onChange={(e) => handleColorImageSelect(color, e)}
+                              className="hidden"
+                            />
                             <Button
-                              size="icon"
-                              variant="ghost"
-                              className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={() => startEditColor(index)}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="text-xs w-full"
+                              disabled={uploadingColorImages[color]}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const fileInput = document.getElementById(`color-image-${color}-${index}`) as HTMLInputElement;
+                                if (fileInput) {
+                                  fileInput.click();
+                                }
+                              }}
                             >
-                              <Pencil className="w-4 h-4" />
+                              {uploadingColorImages[color] ? (
+                                <>
+                                  <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin mr-1" />
+                                  Yükleniyor...
+                                </>
+                              ) : (
+                                <>
+                                  <Upload className="w-3 h-3 mr-1" />
+                                  Dosya Yükle
+                                </>
+                              )}
                             </Button>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="w-8 h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={() => removeColor(index)}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </>
-                        )}
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>

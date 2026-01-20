@@ -1,6 +1,7 @@
 import productCard from "@/assets/product-nfc-card.png";
 import productBand from "@/assets/product-nfc-band.png";
 import productPetTag from "@/assets/product-pet-tag.png";
+import { supabase } from "./supabase";
 
 /**
  * Ürün görseli için fallback ile URL döndürür
@@ -41,6 +42,40 @@ export const getProductImage = (
 
   // Varsayılan
   return productCard;
+};
+
+/**
+ * Ürün görselini renge göre getirir
+ * Önce product_images tablosundan renge özel görseli arar, yoksa fallback kullanır
+ * Birden fazla görsel varsa ilk görseli (sort_order'a göre) döndürür
+ */
+export const getProductImageByColor = async (
+  productId: number,
+  color: string,
+  fallbackImageUrl: string | null | undefined,
+  categoryOrName: string
+): Promise<string> => {
+  try {
+    // Önce product_images tablosundan renge özel görselleri ara
+    const { data: productImages, error } = await supabase
+      .from("product_images")
+      .select("image_url")
+      .eq("product_id", productId)
+      .eq("color", color)
+      .order("sort_order", { ascending: true })
+      .limit(1);
+
+    if (!error && productImages && productImages.length > 0 && productImages[0]?.image_url) {
+      return productImages[0].image_url;
+    }
+
+    // Renk bazlı görsel yoksa, fallback görseli kullan
+    return getProductImage(fallbackImageUrl, categoryOrName);
+  } catch (error) {
+    console.error("Renk bazlı görsel getirilemedi:", error);
+    // Hata durumunda fallback görseli döndür
+    return getProductImage(fallbackImageUrl, categoryOrName);
+  }
 };
 
 /**
