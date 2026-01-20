@@ -83,7 +83,7 @@ export default function Products() {
         
         // Native fetch API kullan - Supabase client yerine
         const response = await fetch(
-          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url,monthly_subscription_fee&is_active=eq.true&order=id.asc`,
+          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url,monthly_subscription_fee&is_active=eq.true&order=sort_order.asc`,
           {
             method: 'GET',
             headers: {
