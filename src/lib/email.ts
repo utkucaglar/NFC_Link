@@ -269,8 +269,7 @@ export const getEmailSettings = async (): Promise<EmailSettings | null> => {
       .maybeSingle(); // single() yerine maybeSingle() kullan - 406 hatasını önler
 
     if (error) {
-      // 406 veya diğer hataları sessizce yok say
-      console.warn("Email ayarları alınamadı:", error.message);
+      // 406 veya diğer hataları sessizce yok say (konsola yazma)
       return null;
     }
     
@@ -279,7 +278,7 @@ export const getEmailSettings = async (): Promise<EmailSettings | null> => {
     try {
       return JSON.parse(data.value) as EmailSettings;
     } catch (parseError) {
-      console.warn("Email ayarları parse edilemedi:", parseError);
+      // Parse hatası sessizce yok say
       return null;
     }
   } catch (err) {

@@ -73,8 +73,7 @@ export const getSmsSettings = async (): Promise<SmsSettings | null> => {
       .maybeSingle(); // single() yerine maybeSingle() kullan - 406 hatasını önler
 
     if (error) {
-      // 406 veya diğer hataları sessizce yok say
-      console.warn("SMS ayarları alınamadı:", error.message);
+      // 406 veya diğer hataları sessizce yok say (konsola yazma)
       return null;
     }
     
@@ -83,7 +82,7 @@ export const getSmsSettings = async (): Promise<SmsSettings | null> => {
     try {
       return JSON.parse(data.value) as SmsSettings;
     } catch (parseError) {
-      console.warn("SMS ayarları parse edilemedi:", parseError);
+      // Parse hatası sessizce yok say
       return null;
     }
   } catch (err) {
@@ -176,12 +175,12 @@ export const sendSms = async (
   const settings = await getSmsSettings();
 
   if (!settings) {
-    console.log("SMS ayarları bulunamadı");
+    // SMS ayarları yoksa sessizce başarısız döndür (konsola yazma)
     return { success: false, error: "SMS ayarları yapılandırılmamış" };
   }
 
   if (!settings.is_enabled) {
-    console.log("SMS servisi devre dışı");
+    // SMS servisi devre dışıysa sessizce başarısız döndür (konsola yazma)
     return { success: false, error: "SMS servisi devre dışı" };
   }
 
