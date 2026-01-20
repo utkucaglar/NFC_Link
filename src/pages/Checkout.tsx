@@ -25,7 +25,7 @@ import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase, ShippingAddress } from "@/lib/supabase";
 import { sendOrderStatusSms } from "@/lib/sms";
-import { sendOrderStatusEmail } from "@/lib/email";
+import { sendOrderStatusEmail, sendNewOrderNotificationToAdmins } from "@/lib/email";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
@@ -488,7 +488,20 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           quantity: item.quantity,
           price: item.price,
         }));
+        // Müşteriye sipariş onay emaili
         sendOrderStatusEmail(user.email, orderNumber, "confirmed", orderItems, total).catch(console.error);
+        
+        // Admin'lere yeni sipariş bildirimi
+        const customerName = profile?.first_name && profile?.last_name 
+          ? `${profile.first_name} ${profile.last_name}`
+          : user.email;
+        sendNewOrderNotificationToAdmins(
+          orderNumber,
+          customerName,
+          user.email,
+          total,
+          orderItems
+        ).catch(console.error);
       }
       
       clearCart();

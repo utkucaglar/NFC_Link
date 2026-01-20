@@ -468,6 +468,57 @@ export const sendNewTicketNotificationToAdmins = async (
   }
 };
 
+// Yeni sipariş bildirimi (Admin'lere) - Edge Function kullanarak
+export const sendNewOrderNotificationToAdmins = async (
+  orderNumber: string,
+  customerName: string,
+  customerEmail: string,
+  total: number,
+  items: Array<{ name: string; quantity: number; price: number }>
+) => {
+  try {
+    console.log("🔔 Yeni sipariş admin bildirimi başlatılıyor...", { orderNumber, customerEmail });
+    
+    // Edge Function'ı çağır (RLS bypass ile admin email'lerini alır)
+    const { data, error } = await supabase.functions.invoke("notify-admin-order", {
+      body: {
+        orderNumber,
+        customerName,
+        customerEmail,
+        total,
+        items,
+      },
+      headers: {
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+    });
+
+    if (error) {
+      console.error("❌ Edge Function hatası:", error);
+      return { success: false, error: error.message || "Edge Function çağrılamadı" };
+    }
+
+    console.log("✅ Edge Function yanıtı:", data);
+
+    if (data?.success) {
+      console.log(`✅ Admin bildirimleri başarılı: ${data.sentCount}/${data.totalAdmins} email gönderildi`);
+      return {
+        success: true,
+        sentCount: data.sentCount || 0,
+        failedCount: data.failedCount || 0,
+        totalAdmins: data.totalAdmins || 0,
+      };
+    } else {
+      console.error("❌ Admin bildirimi başarısız:", data?.error);
+      return { success: false, error: data?.error || "Email gönderilemedi" };
+    }
+  } catch (error: any) {
+    console.error("❌ Admin bildirimi exception:", error);
+    console.error("Error stack:", error.stack);
+    return { success: false, error: error.message || "Beklenmeyen hata" };
+  }
+};
+
 // Test emaili
 export const sendTestEmail = async (email: string) => {
   return sendEmail(email, {

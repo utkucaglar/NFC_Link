@@ -1,5 +1,5 @@
-// Supabase Edge Function - Notify Admins of New Support Ticket
-// Deploy: npx supabase functions deploy notify-admin-ticket
+// Supabase Edge Function - Notify Admins of New Order
+// Deploy: npx supabase functions deploy notify-admin-order
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -12,13 +12,12 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-interface TicketNotificationRequest {
-  ticketNumber: string;
-  subject: string;
-  category: string;
+interface OrderNotificationRequest {
+  orderNumber: string;
   customerName: string;
   customerEmail: string;
-  message: string;
+  total: number;
+  items: Array<{ name: string; quantity: number; price: number }>;
 }
 
 Deno.serve(async (req) => {
@@ -28,7 +27,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    console.log("🔔 Admin bildirimi Edge Function başlatılıyor...");
+    console.log("🔔 Yeni sipariş admin bildirimi başlatılıyor...");
 
     if (!RESEND_API_KEY) {
       throw new Error("RESEND_API_KEY is not configured");
@@ -41,8 +40,8 @@ Deno.serve(async (req) => {
     // Service role client (RLS bypass)
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const body: TicketNotificationRequest = await req.json();
-    console.log("Request body:", JSON.stringify({ ticketNumber: body.ticketNumber }));
+    const body: OrderNotificationRequest = await req.json();
+    console.log("Request body:", JSON.stringify({ orderNumber: body.orderNumber }));
 
     // Email ayarlarını al (from_email için)
     let fromEmail = "Esdodesign <noreply@esdodesign.com>";
@@ -64,7 +63,7 @@ Deno.serve(async (req) => {
       console.warn("⚠️ Email ayarları alınamadı, varsayılan kullanılıyor:", err);
     }
 
-    // Admin email'lerini al (RLS bypass ile)
+    // Admin email'lerini al (RLS bypass ile) - TÜM admin'leri al
     const { data: admins, error: adminError } = await supabaseAdmin
       .from("user_profiles")
       .select("email, first_name")
@@ -88,24 +87,22 @@ Deno.serve(async (req) => {
 
     console.log(`📧 ${admins.length} admin bulundu:`, admins.map(a => a.email));
 
-    // Kategori label'ını al
-    const categoryLabels: Record<string, string> = {
-      general: "Genel Bilgi",
-      order: "Sipariş Hakkında",
-      technical: "Teknik Destek",
-      billing: "Ödeme/Fatura",
-      other: "Diğer",
-    };
-    const categoryLabel = categoryLabels[body.category] || body.category;
-
     // Email template
+    const itemsHtml = body.items.map(item => `
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.name}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₺${(item.price * item.quantity).toLocaleString('tr-TR')}</td>
+      </tr>
+    `).join('');
+
     const emailHtml = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Yeni Destek Talebi</title>
+  <title>Yeni Sipariş</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }
     .container { max-width: 600px; margin: 0 auto; background: #fff; }
@@ -115,6 +112,7 @@ Deno.serve(async (req) => {
     .footer { background: #1a1a2e; color: #888; padding: 20px; text-align: center; font-size: 12px; }
     .button { display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #fff !important; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
     .info-box { background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; }
     h2 { color: #1a1a2e; }
   </style>
 </head>
@@ -124,23 +122,39 @@ Deno.serve(async (req) => {
       <h1>Esdodesign</h1>
     </div>
     <div class="content">
-      <h2>Yeni Destek Talebi Alındı! 🔔</h2>
+      <h2>Yeni Sipariş Alındı! 🎉</h2>
       <p>Merhaba,</p>
-      <p><strong>#${body.ticketNumber}</strong> numaralı yeni bir destek talebi oluşturuldu.</p>
+      <p><strong>#${body.orderNumber}</strong> numaralı yeni bir sipariş oluşturuldu.</p>
       
       <div class="info-box">
-        <h3 style="margin-top: 0;">Talep Detayları</h3>
-        <p><strong>Konu:</strong> ${body.subject}</p>
-        <p><strong>Kategori:</strong> ${categoryLabel}</p>
+        <h3 style="margin-top: 0;">Sipariş Detayları</h3>
         <p><strong>Müşteri:</strong> ${body.customerName} (${body.customerEmail})</p>
-        <p><strong>Mesaj:</strong></p>
-        <p style="background: #fff; padding: 15px; border-radius: 8px; border-left: 3px solid #6366f1; margin-top: 10px;">${body.message}</p>
+        <p><strong>Sipariş No:</strong> ${body.orderNumber}</p>
+        
+        <table style="margin-top: 15px;">
+          <thead>
+            <tr style="background: #f8f9fa;">
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #6366f1;">Ürün</th>
+              <th style="padding: 10px; text-align: center; border-bottom: 2px solid #6366f1;">Adet</th>
+              <th style="padding: 10px; text-align: right; border-bottom: 2px solid #6366f1;">Tutar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHtml}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2" style="padding: 15px 10px; text-align: right; font-weight: bold; border-top: 2px solid #6366f1;">Toplam:</td>
+              <td style="padding: 15px 10px; text-align: right; font-weight: bold; font-size: 18px; color: #6366f1; border-top: 2px solid #6366f1;">₺${body.total.toLocaleString('tr-TR')}</td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
 
-      <p>Talep detaylarını görüntülemek ve yanıtlamak için:</p>
-      <a href="https://esdodesign.com/admin/support" class="button">Destek Paneline Git</a>
+      <p>Siparişi görüntülemek ve yönetmek için:</p>
+      <a href="https://esdodesign.com/admin/orders" class="button">Sipariş Paneline Git</a>
       
-      <p>Saygılarımızla,<br><strong>Esdodesign Destek Sistemi</strong></p>
+      <p>Saygılarımızla,<br><strong>Esdodesign Sipariş Sistemi</strong></p>
     </div>
     <div class="footer">
       <p>&copy; ${new Date().getFullYear()} Esdodesign. Tüm hakları saklıdır.</p>
@@ -151,11 +165,8 @@ Deno.serve(async (req) => {
     `;
 
     // Her admin'e email gönder
-    console.log(`📨 ${admins.length} admin'e email gönderiliyor...`);
     const results = await Promise.allSettled(
       admins.map(async (admin) => {
-        console.log(`📧 ${admin.email} için email gönderiliyor...`);
-
         const response = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
@@ -165,7 +176,7 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             from: fromEmail,
             to: [admin.email],
-            subject: `Yeni Destek Talebi - #${body.ticketNumber}`,
+            subject: `Yeni Sipariş - #${body.orderNumber}`,
             html: emailHtml,
           }),
         });
@@ -173,7 +184,6 @@ Deno.serve(async (req) => {
         const result = await response.json();
 
         if (!response.ok) {
-          console.error(`❌ ${admin.email} email gönderilemedi:`, result);
           throw new Error(result.message || result.error || "Failed to send email");
         }
 
@@ -184,6 +194,13 @@ Deno.serve(async (req) => {
 
     const successCount = results.filter((r) => r.status === "fulfilled").length;
     const failedCount = results.length - successCount;
+
+    // Başarısız olanları logla
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        console.error(`❌ ${admins[index].email} email gönderilemedi:`, result.reason);
+      }
+    });
 
     console.log(`✅ Admin bildirimleri tamamlandı: ${successCount} başarılı, ${failedCount} başarısız`);
 
