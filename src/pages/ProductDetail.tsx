@@ -91,6 +91,7 @@ export default function ProductDetail() {
   const [currentProductImage, setCurrentProductImage] = useState<string>("");
   const [productImages, setProductImages] = useState<string[]>([]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [imagesByColor, setImagesByColor] = useState<Record<string, string[]>>({});
   
   // Customization form state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -98,6 +99,8 @@ export default function ProductDetail() {
   const [petIdData, setPetIdData] = useState<PetIdData>(defaultPetIdData);
   const [redirectData, setRedirectData] = useState<RedirectData>(defaultRedirectData);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [emailValidated, setEmailValidated] = useState(false);
+  const [emailValidationAttempted, setEmailValidationAttempted] = useState(false);
 
   // Reviews state
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -174,32 +177,70 @@ export default function ProductDetail() {
     }
   }, [product?.id, user]);
 
-  // Renk seçildiğinde görselleri güncelle
+  // Ürün yüklendiğinde tüm renklerin görsellerini önceden yükle
   useEffect(() => {
-    const updateProductImages = async () => {
+    const preloadAllColorImages = async () => {
       if (!product) return;
       
       const colors = product.colors?.length
         ? product.colors
         : DEFAULT_COLORS[product.category] || ["Standart"];
       
-      const selectedColorName = colors[selectedColor] || colors[0];
+      // Tüm renklerin görsellerini paralel olarak yükle
+      const imagePromises = colors.map(async (color) => {
+        const images = await getProductImagesByColor(
+          product.id,
+          color,
+          product.image_url,
+          product.category
+        );
+        return { color, images };
+      });
       
-      // Tüm görselleri getir (sort_order'a göre sıralı)
-      const images = await getProductImagesByColor(
-        product.id,
-        selectedColorName,
-        product.image_url,
-        product.category
-      );
+      const results = await Promise.all(imagePromises);
+      const imagesMap: Record<string, string[]> = {};
+      results.forEach(({ color, images }) => {
+        imagesMap[color] = images;
+        // Görselleri önceden yükle (preload)
+        images.forEach((imgUrl) => {
+          const img = new Image();
+          img.src = imgUrl;
+        });
+      });
       
-      setProductImages(images);
-      setCurrentImageIndex(0);
-      setCurrentProductImage(images[0] || getProductImage(product.image_url, product.category));
+      setImagesByColor(imagesMap);
+      
+      // İlk rengin görsellerini ayarla
+      const firstColor = colors[0];
+      if (imagesMap[firstColor] && imagesMap[firstColor].length > 0) {
+        setProductImages(imagesMap[firstColor]);
+        setCurrentImageIndex(0);
+        setCurrentProductImage(imagesMap[firstColor][0]);
+      }
     };
 
-    updateProductImages();
-  }, [product, selectedColor]);
+    preloadAllColorImages();
+  }, [product]);
+
+  // Renk seçildiğinde görselleri güncelle (cache'den)
+  useEffect(() => {
+    if (!product || Object.keys(imagesByColor).length === 0) return;
+    
+    const colors = product.colors?.length
+      ? product.colors
+      : DEFAULT_COLORS[product.category] || ["Standart"];
+    
+    const selectedColorName = colors[selectedColor] || colors[0];
+    
+    // Cache'den görselleri al
+    const images = imagesByColor[selectedColorName] || [];
+    
+    if (images.length > 0) {
+      setProductImages(images);
+      setCurrentImageIndex(0);
+      setCurrentProductImage(images[0]);
+    }
+  }, [product, selectedColor, imagesByColor]);
 
   // Görsel değiştiğinde currentProductImage'i güncelle
   useEffect(() => {
@@ -488,16 +529,74 @@ export default function ProductDetail() {
   const nfcType = product.nfc_type || getNfcTypeFromCategory(product.category);
   const requiresCustomization = nfcType === "business-card" || nfcType === "pet-id" || nfcType === "redirect";
 
+  // Basit telefon numarası validasyonu - parse etmeden sadece rakam sayısını kontrol et
+  const validatePhoneNumber = (phone: string): boolean => {
+    if (!phone || !phone.trim()) {
+      console.log("validatePhoneNumber - phone is empty:", phone);
+      return false;
+    }
+    
+    // Önce tüm boşlukları temizle (input'ta boşluklarla gösteriliyor olabilir)
+    const cleanPhone = phone.replace(/\s/g, "");
+    console.log("validatePhoneNumber - input:", phone, "cleaned:", cleanPhone);
+    
+    // Bilinen country code'ları kontrol et (uzun olanlardan başla, yoksa +1 gibi kısa olanlar yanlış eşleşir)
+    // Örnek: +358 ile başlıyorsa +3 ile eşleşmemeli
+    const countryCodes = [
+      "+358", "+971", "+966", // 3 haneli (önce kontrol et)
+      "+90", "+44", "+49", "+33", "+39", "+34", "+31", "+32", "+41", "+43", "+46", "+47", "+45", "+86", "+81", "+82", "+91", "+20", "+27", "+61", "+64", "+55", "+52", "+54", // 2 haneli
+      "+1", "+7" // 1 haneli (en son kontrol et)
+    ];
+    
+    // Country code'u bul (uzun olanlardan başla)
+    let countryCode = "";
+    for (const code of countryCodes) {
+      if (cleanPhone.startsWith(code)) {
+        countryCode = code;
+        break;
+      }
+    }
+    
+    if (!countryCode) {
+      console.log("validatePhoneNumber - no known country code found");
+      return false;
+    }
+    
+    // Country code'dan sonraki kısmı al (sadece rakamlar)
+    const afterCountryCode = cleanPhone.substring(countryCode.length);
+    const phoneNumberDigits = afterCountryCode.replace(/\D/g, "").length;
+    
+    console.log("validatePhoneNumber - countryCode:", countryCode, "afterCountryCode:", afterCountryCode, "phoneNumberDigits:", phoneNumberDigits);
+    
+    return phoneNumberDigits === 10;
+  };
+
   // Form doğrulama
   const validateBusinessCardForm = (): boolean => {
     const errors: Record<string, string> = {};
     if (!businessCardData.name.trim()) errors.name = "İsim soyisim gereklidir";
     if (!businessCardData.title.trim()) errors.title = "Meslek ünvanı gereklidir";
-    if (!businessCardData.phone.trim()) errors.phone = "Telefon numarası gereklidir";
-    if (!businessCardData.email.trim()) errors.email = "E-posta gereklidir";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(businessCardData.email)) {
-      errors.email = "Geçerli bir e-posta adresi girin";
+    
+    // Telefon numarası kontrolü - 10 haneli olmalı
+    if (!businessCardData.phone.trim()) {
+      errors.phone = "Telefon numarası gereklidir";
+    } else if (!validatePhoneNumber(businessCardData.phone)) {
+      errors.phone = "Lütfen telefon numarasını tam giriniz";
     }
+    
+    // Email kontrolü
+    if (!businessCardData.email.trim()) {
+      errors.email = "E-posta gereklidir";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(businessCardData.email)) {
+      errors.email = "Geçerli bir e-posta adresi girin";
+    } else if (!emailValidationAttempted) {
+      // Email formatı geçerli ama henüz doğrulanmamış
+      errors.email = "Lütfen emailin doğrulanmasını bekleyiniz";
+    } else if (!emailValidated) {
+      // Email doğrulanmaya çalışıldı ama geçersiz
+      errors.email = "Email adresi doğrulanamadı. Lütfen geçerli bir email adresi girin";
+    }
+    
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -506,7 +605,22 @@ export default function ProductDetail() {
     const errors: Record<string, string> = {};
     if (!petIdData.petName.trim()) errors.petName = "Evcil hayvan adı gereklidir";
     if (!petIdData.ownerName.trim()) errors.ownerName = "Sahibi adı gereklidir";
-    if (!petIdData.ownerPhone.trim()) errors.ownerPhone = "Sahibi telefonu gereklidir";
+    
+    // Telefon numarası kontrolü - 10 haneli olmalı
+    if (!petIdData.ownerPhone.trim()) {
+      errors.ownerPhone = "Telefon numarası gereklidir";
+    } else if (!validatePhoneNumber(petIdData.ownerPhone)) {
+      errors.ownerPhone = "Lütfen telefon numarasını tam giriniz";
+    }
+    
+    // Mikroçip numarası kontrolü - boşsa hata verme, doluysa 15 hane olmalı
+    if (petIdData.microchipNumber && petIdData.microchipNumber.trim().length > 0) {
+      const digitsOnly = petIdData.microchipNumber.replace(/\D/g, "");
+      if (digitsOnly.length !== 15) {
+        errors.microchipNumber = "Mikroçip numarası 15 haneli olmalıdır";
+      }
+    }
+    
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -529,9 +643,24 @@ export default function ProductDetail() {
     }
   };
 
-  const handleFormSubmit = () => {
+  const handleFormSubmit = async () => {
+    // Aktif input'tan çık (blur event'ini tetikle)
+    const activeElement = document.activeElement as HTMLElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+      activeElement.blur();
+      // Blur event'lerinin ve validasyonların tamamlanması için kısa bir süre bekle
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    // State güncellemelerinin tamamlanması için bir sonraki render cycle'ı bekle
+    // React state güncellemeleri asenkron olduğu için biraz daha uzun bekleyelim
+    await new Promise(resolve => setTimeout(resolve, 200));
+
     let isValid = false;
     let customizationData: any = null;
+
+    console.log("handleFormSubmit - businessCardData.phone:", businessCardData.phone);
+    console.log("handleFormSubmit - petIdData.ownerPhone:", petIdData.ownerPhone);
 
     if (nfcType === "business-card") {
       isValid = validateBusinessCardForm();
@@ -552,6 +681,9 @@ export default function ProductDetail() {
       setPetIdData(defaultPetIdData);
       setRedirectData(defaultRedirectData);
       setFormErrors({});
+      // Email validasyon durumunu da sıfırla
+      setEmailValidated(false);
+      setEmailValidationAttempted(false);
     }
   };
 
@@ -606,10 +738,10 @@ export default function ProductDetail() {
                     src={currentProductImage}
                     alt={`${product.name} - Görsel ${currentImageIndex + 1}`}
                     className="w-full h-full object-contain"
-                    initial={{ opacity: 0, scale: 0.95 }}
+                    initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.3 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.15, ease: "easeOut" }}
                   />
                 </AnimatePresence>
               </div>
@@ -1036,6 +1168,25 @@ export default function ProductDetail() {
                 data={businessCardData}
                 onChange={setBusinessCardData}
                 errors={formErrors}
+                onEmailValidationChange={(attempted, isValid) => {
+                  setEmailValidationAttempted(attempted);
+                  setEmailValidated(isValid);
+                }}
+                onErrorClear={(field) => {
+                  if (formErrors[field]) {
+                    setFormErrors(prev => {
+                      const newErrors = { ...prev };
+                      delete newErrors[field];
+                      return newErrors;
+                    });
+                  }
+                }}
+                onErrorSet={(field, message) => {
+                  setFormErrors(prev => ({
+                    ...prev,
+                    [field]: message
+                  }));
+                }}
               />
             )}
             {nfcType === "pet-id" && (
@@ -1043,6 +1194,21 @@ export default function ProductDetail() {
                 data={petIdData}
                 onChange={setPetIdData}
                 errors={formErrors}
+                onErrorClear={(field) => {
+                  if (formErrors[field]) {
+                    setFormErrors(prev => {
+                      const newErrors = { ...prev };
+                      delete newErrors[field];
+                      return newErrors;
+                    });
+                  }
+                }}
+                onErrorSet={(field, message) => {
+                  setFormErrors(prev => ({
+                    ...prev,
+                    [field]: message
+                  }));
+                }}
               />
             )}
             {nfcType === "redirect" && (
@@ -1050,6 +1216,15 @@ export default function ProductDetail() {
                 data={redirectData}
                 onChange={setRedirectData}
                 errors={formErrors}
+                onErrorClear={(field) => {
+                  if (formErrors[field]) {
+                    setFormErrors(prev => {
+                      const newErrors = { ...prev };
+                      delete newErrors[field];
+                      return newErrors;
+                    });
+                  }
+                }}
               />
             )}
           </div>

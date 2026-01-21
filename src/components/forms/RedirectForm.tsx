@@ -1,5 +1,6 @@
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 
 export interface RedirectData {
@@ -33,11 +34,46 @@ interface RedirectFormProps {
   data: RedirectData;
   onChange: (data: RedirectData) => void;
   errors?: Record<string, string>;
+  onErrorClear?: (field: string) => void;
 }
 
-export function RedirectForm({ data, onChange, errors = {} }: RedirectFormProps) {
+export function RedirectForm({ data, onChange, errors = {}, onErrorClear }: RedirectFormProps) {
   const handleChange = (field: keyof RedirectData, value: string) => {
     onChange({ ...data, [field]: value });
+    // Clear error for this field when user starts typing
+    if (errors[field] && onErrorClear) {
+      onErrorClear(field);
+    }
+  };
+
+  const toTitleCase = (str: string): string => {
+    if (!str) return str;
+    return str
+      .toLowerCase()
+      .split(' ')
+      .map(word => {
+        if (word.length === 0) return word;
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join(' ');
+  };
+
+  const handlePartnerName1Blur = () => {
+    if (data.partnerName1) {
+      const titleCasedName = toTitleCase(data.partnerName1);
+      if (titleCasedName !== data.partnerName1) {
+        handleChange("partnerName1", titleCasedName);
+      }
+    }
+  };
+
+  const handlePartnerName2Blur = () => {
+    if (data.partnerName2) {
+      const titleCasedName = toTitleCase(data.partnerName2);
+      if (titleCasedName !== data.partnerName2) {
+        handleChange("partnerName2", titleCasedName);
+      }
+    }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,6 +103,7 @@ export function RedirectForm({ data, onChange, errors = {} }: RedirectFormProps)
             id="partnerName1"
             value={data.partnerName1}
             onChange={(e) => handleChange("partnerName1", e.target.value)}
+            onBlur={handlePartnerName1Blur}
             placeholder="Örn: Ali"
             className={errors.partnerName1 ? "border-destructive" : ""}
           />
@@ -80,6 +117,7 @@ export function RedirectForm({ data, onChange, errors = {} }: RedirectFormProps)
             id="partnerName2"
             value={data.partnerName2}
             onChange={(e) => handleChange("partnerName2", e.target.value)}
+            onBlur={handlePartnerName2Blur}
             placeholder="Örn: Ayşe"
             className={errors.partnerName2 ? "border-destructive" : ""}
           />
@@ -92,12 +130,11 @@ export function RedirectForm({ data, onChange, errors = {} }: RedirectFormProps)
       {/* Relationship Start Date */}
       <div className="space-y-2">
         <Label htmlFor="relationshipStartDate">İlişki Başlangıç Tarihi *</Label>
-        <Input
-          id="relationshipStartDate"
-          type="date"
+        <DatePicker
           value={data.relationshipStartDate}
-          onChange={(e) => handleChange("relationshipStartDate", e.target.value)}
-          className={errors.relationshipStartDate ? "border-destructive" : ""}
+          onChange={(value) => handleChange("relationshipStartDate", value)}
+          placeholder="Tarih seçin"
+          className={errors.relationshipStartDate ? "[&>button]:border-destructive" : ""}
         />
         {errors.relationshipStartDate && (
           <p className="text-xs text-destructive">{errors.relationshipStartDate}</p>

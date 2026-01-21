@@ -182,3 +182,84 @@
     }
   }
 }
+
+/* Date Picker Customization - WebKit (Chrome, Edge, Safari) */
+@layer base {
+  /* Date input calendar icon */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+    filter: invert(0.5);
+    transition: opacity 0.2s;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+
+  /* Date picker popup styling */
+  input[type="date"]::-webkit-datetime-edit {
+    color: hsl(var(--foreground));
+  }
+
+  input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+    color: hsl(var(--foreground));
+  }
+
+  input[type="date"]::-webkit-datetime-edit-text {
+    color: hsl(var(--muted-foreground));
+  }
+
+  input[type="date"]::-webkit-datetime-edit-month-field,
+  input[type="date"]::-webkit-datetime-edit-day-field,
+  input[type="date"]::-webkit-datetime-edit-year-field {
+    color: hsl(var(--foreground));
+  }
+
+  input[type="date"]::-webkit-inner-spin-button {
+    display: none;
+  }
+}
+
+/* Date Picker Popup Styling - WebKit */
+@supports (-webkit-appearance: none) {
+  /* Calendar popup background and text */
+  input[type="date"] {
+    color-scheme: light;
+  }
+
+  /* Custom date picker popup colors using CSS variables */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: none;
+  }
+}
+
+/* Global date picker popup styling via shadow DOM */
+/* Note: Direct styling of date picker popup is limited, but we can style the input itself */
+input[type="date"] {
+  color-scheme: light;
+}
+
+/* Firefox date picker styling */
+@-moz-document url-prefix() {
+  input[type="date"] {
+    color-scheme: light;
+  }
+}
+
+/* Additional styling for better date picker appearance */
+input[type="date"]:focus {
+  color-scheme: light;
+}
+
+/* Custom date picker popup colors - using CSS custom properties that browsers can use */
+/* This will affect the native date picker popup where supported */
+:root {
+  --date-picker-bg: hsl(var(--background));
+  --date-picker-text: hsl(var(--foreground));
+  --date-picker-primary: hsl(var(--primary));
+  --date-picker-primary-text: hsl(var(--primary-foreground));
+  --date-picker-border: hsl(var(--border));
+  --date-picker-hover: hsl(var(--muted));
+  --date-picker-muted-text: hsl(var(--muted-foreground));
+}
