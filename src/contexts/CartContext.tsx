@@ -16,6 +16,7 @@ interface CartContextType {
   addToCart: (item: Omit<CartItem, "quantity">) => void;
   removeFromCart: (id: number) => void;
   updateQuantity: (id: number, quantity: number) => void;
+  updateCustomization: (id: number, customization: Record<string, any>) => void;
   clearCart: () => void;
   cartItemCount: number;
   cartTotal: number;
@@ -65,6 +66,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const updateCustomization = useCallback((id: number, customization: Record<string, any>) => {
+    setCartItems((prev) =>
+      prev.map((item) => 
+        item.id === id 
+          ? { ...item, customization: { ...item.customization, ...customization } }
+          : item
+      )
+    );
+    toast.success("Kişiselleştirme güncellendi");
+  }, []);
+
   const clearCart = useCallback(() => {
     setCartItems([]);
     toast.success("Sepet temizlendi");
@@ -80,6 +92,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         addToCart,
         removeFromCart,
         updateQuantity,
+        updateCustomization,
         clearCart,
         cartItemCount,
         cartTotal,
