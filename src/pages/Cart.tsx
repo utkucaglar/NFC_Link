@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Trash2, Plus, Minus, ShoppingBag, ArrowRight, AlertCircle, Tag, X, CheckCircle2, Loader2, Edit, User, Briefcase, Building, Mail, Phone, PawPrint, Heart, Calendar, Palette, Hash, MapPin, Linkedin, Instagram, Globe, FileText } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
@@ -13,12 +13,13 @@ import { toast } from "sonner";
 import { BusinessCardForm, BusinessCardData, defaultBusinessCardData } from "@/components/forms/BusinessCardForm";
 import { PetIdForm, PetIdData, defaultPetIdData } from "@/components/forms/PetIdForm";
 import { RedirectForm, RedirectData, defaultRedirectData } from "@/components/forms/RedirectForm";
+import { getProductImageByColor, DEFAULT_COLORS } from "@/lib/helpers";
 
 // Kişiselleştirme gerektiren NFC tipleri
 const CUSTOMIZATION_NFC_TYPES = ["business-card", "pet-id", "redirect"];
 
 export default function Cart() {
-  const { cartItems, updateQuantity, removeFromCart, updateCustomization, cartTotal } = useCart();
+  const { cartItems, updateQuantity, removeFromCart, updateCustomization, updateItemImage, cartTotal } = useCart();
   const { user } = useAuth();
   const [couponCode, setCouponCode] = useState("");
   const [discountLoading, setDiscountLoading] = useState(false);
@@ -42,10 +43,153 @@ export default function Cart() {
   const [emailValidated, setEmailValidated] = useState(false);
   const [emailValidationAttempted, setEmailValidationAttempted] = useState(false);
 
+  // Product data cache for color selection
+  const [productDataCache, setProductDataCache] = useState<Record<number, { colors: string[]; category: string; image_url: string | null }>>({});
+  const [loadingColors, setLoadingColors] = useState<Record<number, boolean>>({});
+
   // Ürünün kişiselleştirme gerektirip gerektirmediğini kontrol et
   const requiresCustomization = (item: typeof cartItems[0]): boolean => {
     const nfcType = item.customization?.nfcType || item.customization?.type;
     return CUSTOMIZATION_NFC_TYPES.includes(nfcType);
+  };
+
+  // Ürün verilerini yükle (renkler için)
+  useEffect(() => {
+    const fetchProductData = async () => {
+      const productIds = cartItems
+        .map(item => item.productId || item.id)
+        .filter((id, index, self) => self.indexOf(id) === index);
+
+      if (productIds.length === 0) return;
+
+      const idsToFetch = productIds.filter(id => !productDataCache[id]);
+
+      if (idsToFetch.length === 0) return;
+
+      for (const productId of idsToFetch) {
+        setLoadingColors(prev => ({ ...prev, [productId]: true }));
+        try {
+          const { data, error } = await supabase
+            .from('products')
+            .select('colors, category, image_url')
+            .eq('id', productId)
+            .single();
+
+          if (!error && data) {
+            setProductDataCache(prev => ({
+              ...prev,
+              [productId]: {
+                colors: data.colors || DEFAULT_COLORS[data.category] || ["Standart"],
+                category: data.category,
+                image_url: data.image_url
+              }
+            }));
+          }
+        } catch (err) {
+          console.error(`Ürün ${productId} yüklenemedi:`, err);
+        } finally {
+          setLoadingColors(prev => ({ ...prev, [productId]: false }));
+        }
+      }
+    };
+
+    fetchProductData();
+  }, [cartItems]);
+
+  // Renk değiştirme fonksiyonu
+  const handleColorChange = async (itemId: number, newColor: string) => {
+    const item = cartItems.find(i => i.id === itemId);
+    if (!item) {
+      console.error("Ürün bulunamadı:", itemId);
+      return;
+    }
+
+    const productId = item.productId || item.id;
+    const productData = productDataCache[productId];
+    
+    if (!productData) {
+      toast.error("Ürün bilgileri yükleniyor, lütfen bekleyin...");
+      return;
+    }
+
+    // Aynı renk seçilmişse işlem yapma
+    if (item.customization?.renk === newColor) {
+      return;
+    }
+
+    try {
+      // Yeni rengin görselini al
+      const newImage = await getProductImageByColor(
+        productId,
+        newColor,
+        productData.image_url,
+        productData.category
+      );
+
+      // Customization'ı güncelle - önce mevcut customization'ı spread et, sonra renk'i override et
+      const updatedCustomization = {
+        ...(item.customization || {}),
+        renk: newColor,
+      };
+      
+      // Renk değişikliği için özel toast mesajı gösterileceği için burada toast gösterme
+      updateCustomization(itemId, updatedCustomization, false);
+
+      // Görseli güncelle
+      updateItemImage(itemId, newImage);
+      
+      toast.success(`Renk "${newColor}" olarak güncellendi`);
+    } catch (err) {
+      console.error("Renk güncellenemedi:", err);
+      toast.error("Renk güncellenemedi");
+    }
+  };
+
+  // Renk seçici bileşeni
+  const renderColorSelector = (item: typeof cartItems[0]) => {
+    const productId = item.productId || item.id;
+    const productData = productDataCache[productId];
+    
+    if (!productData || !productData.colors || productData.colors.length <= 1) {
+      return null;
+    }
+
+    const currentColor = item.customization?.renk || productData.colors[0];
+    const isLoading = loadingColors[productId];
+
+    return (
+      <div className="mt-3">
+        <label className="text-sm font-medium mb-2 block text-muted-foreground">
+          Renk Seçimi
+        </label>
+        <div className="flex gap-2 flex-wrap">
+          {productData.colors.map((color) => {
+            const isSelected = color === currentColor;
+            return (
+              <button
+                key={color}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (!isLoading && !isSelected) {
+                    handleColorChange(item.id, color);
+                  }
+                }}
+                disabled={isLoading || isSelected}
+                className={`px-3 py-1.5 rounded-lg border-2 text-sm font-medium transition-all ${
+                  isSelected
+                    ? "border-primary bg-primary/10 text-primary cursor-default"
+                    : "border-border hover:border-primary/50 text-muted-foreground hover:text-foreground cursor-pointer"
+                } ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                {color}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   // Tema ID'sini Türkçe isme çevir
@@ -750,6 +894,9 @@ export default function Cart() {
                             </span>
                           </div>
                         )}
+
+                        {/* Renk Seçici */}
+                        {renderColorSelector(item)}
 
                         {/* Kişiselleştirme bilgileri */}
                         {item.customization && renderCustomizationInfo(item)}
