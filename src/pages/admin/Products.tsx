@@ -41,7 +41,7 @@ interface Category {
   is_active: boolean;
 }
 
-type NFCType = "business-card" | "pet-id" | "redirect" | null;
+type NFCType = "business-card" | "pet-id" | "redirect" | "nfc-yok" | null;
 
 interface Product {
   id: number;
@@ -58,6 +58,7 @@ interface Product {
   colors: string[] | null;
   specs: Record<string, string> | null;
   monthly_subscription_fee: number;
+  has_subscription: boolean;
   stock_quantity: number;
   sku: string | null;
   is_active: boolean;
@@ -71,6 +72,7 @@ const NFC_TYPE_OPTIONS = [
   { value: "business-card", label: "Dijital Kartvizit", description: "İsim, telefon, sosyal medya bilgileri" },
   { value: "pet-id", label: "Evcil Hayvan Kimliği", description: "Hayvan bilgileri, sahip iletişimi" },
   { value: "redirect", label: "Özel Yönlendirme", description: "Sevgililer sayfası, galeri, anılar" },
+  { value: "nfc-yok", label: "NFC Yok", description: "NFC sistemi olmayan ürünler (abonelik yok)" },
 ];
 
 const emptyProduct: Partial<Product> = {
@@ -86,6 +88,7 @@ const emptyProduct: Partial<Product> = {
   colors: [],
   specs: {},
   monthly_subscription_fee: 29,
+  has_subscription: true,
   stock_quantity: 0,
   sku: "",
   is_active: true,
@@ -512,6 +515,7 @@ export default function AdminProducts() {
         }
       }
 
+      const hasSub = editingProduct.has_subscription !== false && editingProduct.nfc_type !== "nfc-yok";
       const productData = {
         name: editingProduct.name,
         description: editingProduct.description || null,
@@ -524,7 +528,8 @@ export default function AdminProducts() {
         features: editingProduct.features || null,
         colors: editingProduct.colors || null,
         specs: editingProduct.specs || null,
-        monthly_subscription_fee: editingProduct.monthly_subscription_fee || 29,
+        monthly_subscription_fee: hasSub ? (editingProduct.monthly_subscription_fee ?? 29) : 0,
+        has_subscription: hasSub,
         stock_quantity: editingProduct.stock_quantity || 0,
         sku: editingProduct.sku || null,
         is_active: editingProduct.is_active ?? true,
@@ -1163,11 +1168,14 @@ export default function AdminProducts() {
                         } else if (catName.includes("yönlendirme") || catName.includes("özel")) {
                           autoNfcType = "redirect";
                         }
+                        const newNfcType = editingProduct?.nfc_type || autoNfcType;
+                        const isNfcYok = newNfcType === "nfc-yok";
                         setEditingProduct({ 
                           ...editingProduct, 
                           category: e.target.value,
                           category_id: cat?.id || null,
-                          nfc_type: editingProduct?.nfc_type || autoNfcType
+                          nfc_type: newNfcType,
+                          has_subscription: isNfcYok ? false : (editingProduct?.has_subscription ?? true),
                         });
                       }}
                       className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
@@ -1184,10 +1192,15 @@ export default function AdminProducts() {
                     <select
                       id="nfc_type"
                       value={editingProduct?.nfc_type || ""}
-                      onChange={(e) => setEditingProduct({ 
-                        ...editingProduct, 
-                        nfc_type: (e.target.value as NFCType) || null 
-                      })}
+                      onChange={(e) => {
+                        const v = (e.target.value as NFCType) || null;
+                        const isNfcYok = v === "nfc-yok";
+                        setEditingProduct({ 
+                          ...editingProduct, 
+                          nfc_type: v,
+                          has_subscription: isNfcYok ? false : (editingProduct?.has_subscription ?? true),
+                        });
+                      }}
                       className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     >
                       <option value="">Seçin...</option>
@@ -1198,6 +1211,23 @@ export default function AdminProducts() {
                     <p className="text-xs text-muted-foreground mt-1">
                       {NFC_TYPE_OPTIONS.find(o => o.value === editingProduct?.nfc_type)?.description || "Ürünün NFC sayfası tipini belirler"}
                     </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      id="has_subscription"
+                      checked={editingProduct?.nfc_type === "nfc-yok" ? false : (editingProduct?.has_subscription ?? true)}
+                      onCheckedChange={(checked) => setEditingProduct({ ...editingProduct, has_subscription: checked })}
+                      disabled={editingProduct?.nfc_type === "nfc-yok"}
+                    />
+                    <div>
+                      <Label htmlFor="has_subscription" className="cursor-pointer">Abonelik Var</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {editingProduct?.nfc_type === "nfc-yok" 
+                          ? "NFC yok ürünlerde abonelik olmaz" 
+                          : "Aylık abonelik ücreti uygulanacak"}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -1223,16 +1253,18 @@ export default function AdminProducts() {
                     />
                   </div>
 
+                  {(editingProduct?.has_subscription !== false && editingProduct?.nfc_type !== "nfc-yok") && (
                   <div>
                     <Label htmlFor="subscription">Aylık Abonelik (₺)</Label>
                     <Input
                       id="subscription"
                       type="number"
-                      value={editingProduct?.monthly_subscription_fee || ""}
+                      value={editingProduct?.monthly_subscription_fee ?? ""}
                       onChange={(e) => setEditingProduct({ ...editingProduct, monthly_subscription_fee: parseFloat(e.target.value) || 0 })}
                       placeholder="29"
                     />
                   </div>
+                  )}
 
                   <div>
                     <Label htmlFor="stock">Stok Miktarı</Label>

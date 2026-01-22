@@ -10,9 +10,6 @@ import { supabase } from "@/lib/supabase";
 import { getProductImage, formatPrice } from "@/lib/helpers";
 import { toast } from "sonner";
 
-// Kişiselleştirme gerektiren kategoriler (tüm NFC ürünleri)
-const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik"];
-
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
   animate: { opacity: 1, y: 0 },
@@ -80,6 +77,8 @@ interface Product {
   category: string;
   image_url: string | null;
   monthly_subscription_fee: number;
+  nfc_type: string | null;
+  has_subscription?: boolean;
 }
 
 export default function Index() {
@@ -88,40 +87,37 @@ export default function Index() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
 
-  // Ürünün kişiselleştirme gerektirip gerektirmediğini kontrol et
-  const requiresCustomization = (category: string): boolean => {
-    return CUSTOMIZATION_CATEGORIES.some(c => 
-      category.toLowerCase().includes(c.toLowerCase())
-    );
-  };
+  const requiresCustomization = (p: Product): boolean =>
+    (p.nfc_type === "business-card" || p.nfc_type === "pet-id" || p.nfc_type === "redirect");
 
-  // Sepete ekle veya detay sayfasına yönlendir
+  const hasSub = (p: Product): boolean =>
+    p.has_subscription !== false && p.nfc_type !== "nfc-yok";
+
   const handleAddToCart = (product: Product) => {
-    if (requiresCustomization(product.category)) {
+    if (requiresCustomization(product)) {
       navigate(`/product/${product.id}`);
       toast.info("Bu ürün için bilgilerinizi girmeniz gerekiyor");
     } else {
-      const totalPrice = product.price + (product.monthly_subscription_fee || 29);
+      const totalPrice = hasSub(product) ? product.price + (product.monthly_subscription_fee || 29) : product.price;
+      const customization: Record<string, unknown> = {};
+      if (hasSub(product)) customization.subscriptionFee = product.monthly_subscription_fee || 29;
       addToCart({
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: totalPrice, // Ürün + ilk ay abonelik
+        price: totalPrice,
         image: getProductImage(product.image_url, product.category),
-        customization: {
-          subscriptionFee: product.monthly_subscription_fee || 29
-        }
+        customization,
       });
     }
   };
 
-  // Fetch featured products from database
   useEffect(() => {
     const fetchProducts = async () => {
       try {
         const { data, error } = await supabase
           .from('products')
-          .select('id, name, price, category, image_url, monthly_subscription_fee')
+          .select('id, name, price, category, image_url, monthly_subscription_fee, nfc_type, has_subscription')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .limit(3);
@@ -130,7 +126,6 @@ export default function Index() {
         setProducts(data || []);
       } catch (error) {
         console.error('Ürünler yüklenemedi:', error);
-        // Fallback to empty array - will show "no products" or use defaults
       } finally {
         setLoadingProducts(false);
       }
@@ -364,12 +359,14 @@ export default function Index() {
                       <h3 className="text-lg font-semibold mt-3 mb-2 hover:text-primary transition-colors">{product.name}</h3>
                     </Link>
                     <div className="flex items-center justify-between">
-                      <span className="text-2xl font-bold text-gradient">₺{product.price}</span>
+                      <span className="text-2xl font-bold text-gradient">
+                        ₺{(hasSub(product) ? product.price + (product.monthly_subscription_fee || 29) : product.price).toFixed(0)}
+                      </span>
                       <Button 
                         size="sm"
                         onClick={() => handleAddToCart(product)}
                       >
-                        {requiresCustomization(product.category) ? "Bilgileri Gir" : "Sepete Ekle"}
+                        {requiresCustomization(product) ? "Bilgileri Gir" : "Sepete Ekle"}
                       </Button>
                     </div>
                   </div>

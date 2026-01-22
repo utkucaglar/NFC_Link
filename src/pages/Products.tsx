@@ -10,9 +10,6 @@ import { toast } from "sonner";
 import { getProductImage } from "@/lib/helpers";
 import { supabase } from "@/lib/supabase";
 
-// Kişiselleştirme gerektiren kategoriler (tüm NFC ürünleri)
-const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik", "Dijital Kartvizit", "Dijital Anı Defteri"];
-
 interface Category {
   id: number;
   name: string;
@@ -28,6 +25,8 @@ interface Product {
   category: string;
   image_url: string | null;
   monthly_subscription_fee: number;
+  nfc_type: string | null;
+  has_subscription?: boolean;
 }
 
 export default function Products() {
@@ -40,31 +39,27 @@ export default function Products() {
   const [error, setError] = useState<string | null>(null);
   const { addToCart } = useCart();
 
-  // Ürünün kişiselleştirme gerektirip gerektirmediğini kontrol et
-  const requiresCustomization = (category: string): boolean => {
-    return CUSTOMIZATION_CATEGORIES.some(c => 
-      category.toLowerCase().includes(c.toLowerCase())
-    );
-  };
+  const requiresCustomization = (p: Product): boolean =>
+    (p.nfc_type === "business-card" || p.nfc_type === "pet-id" || p.nfc_type === "redirect");
 
-  // Sepete ekle veya detay sayfasına yönlendir
+  const hasSub = (p: Product): boolean =>
+    p.has_subscription !== false && p.nfc_type !== "nfc-yok";
+
   const handleAddToCart = (product: Product) => {
-    if (requiresCustomization(product.category)) {
-      // Kişiselleştirme gerektiren ürünler için detay sayfasına yönlendir
+    if (requiresCustomization(product)) {
       navigate(`/product/${product.id}`);
       toast.info("Bu ürün için bilgilerinizi girmeniz gerekiyor");
     } else {
-      // Diğer ürünler için doğrudan sepete ekle
-      const totalPrice = product.price + (product.monthly_subscription_fee || 29);
+      const totalPrice = hasSub(product) ? product.price + (product.monthly_subscription_fee || 29) : product.price;
+      const customization: Record<string, unknown> = {};
+      if (hasSub(product)) customization.subscriptionFee = product.monthly_subscription_fee || 29;
       addToCart({
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: totalPrice, // Ürün + ilk ay abonelik
+        price: totalPrice,
         image: getProductImage(product.image_url, product.category),
-        customization: {
-          subscriptionFee: product.monthly_subscription_fee || 29
-        }
+        customization,
       });
     }
   };
@@ -94,7 +89,7 @@ export default function Products() {
         // Ürünleri getir
         const { data: productsData, error: productsError } = await supabase
           .from("products")
-          .select("id, name, description, price, category, image_url, monthly_subscription_fee")
+          .select("id, name, description, price, category, image_url, monthly_subscription_fee, nfc_type, has_subscription")
           .eq("is_active", true)
           .order("sort_order", { ascending: true });
 
@@ -274,17 +269,19 @@ export default function Products() {
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-2xl font-bold text-gradient">
-                        ₺{(product.price + (product.monthly_subscription_fee || 29)).toFixed(0)}
+                        ₺{(hasSub(product) ? product.price + (product.monthly_subscription_fee || 29) : product.price).toFixed(0)}
                       </span>
                       <p className="text-xs text-muted-foreground">
-                        ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik)
+                        {hasSub(product)
+                          ? `₺${product.price} ürün + ₺${product.monthly_subscription_fee || 29} (ilk ay abonelik)`
+                          : "Abonelik yok"}
                       </p>
                     </div>
                     <Button 
                       size="sm"
                       onClick={() => handleAddToCart(product)}
                     >
-                      {requiresCustomization(product.category) ? (
+                      {requiresCustomization(product) ? (
                         <>
                           <ArrowRight className="w-4 h-4 mr-1" />
                           Bilgileri Gir

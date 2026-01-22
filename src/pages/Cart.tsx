@@ -757,7 +757,12 @@ export default function Cart() {
                         {/* Fiyat */}
                         <div className="mt-3 pt-3 border-t border-border/50">
                           <p className="text-xl font-bold text-gradient">
-                            ₺{Math.round(item.price)} <span className="text-sm font-normal text-muted-foreground">(1 ay abonelik dahil)</span>
+                            ₺{Math.round(item.price)}
+                            {item.customization?.subscriptionFee != null ? (
+                              <span className="text-sm font-normal text-muted-foreground"> (1 ay abonelik dahil)</span>
+                            ) : (
+                              <span className="text-sm font-normal text-muted-foreground"> (Abonelik yok)</span>
+                            )}
                           </p>
                         </div>
 

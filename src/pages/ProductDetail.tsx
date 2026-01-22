@@ -31,7 +31,7 @@ import { BusinessCardForm, BusinessCardData, defaultBusinessCardData } from "@/c
 import { PetIdForm, PetIdData, defaultPetIdData } from "@/components/forms/PetIdForm";
 import { RedirectForm, RedirectData, defaultRedirectData } from "@/components/forms/RedirectForm";
 
-type NFCType = "business-card" | "pet-id" | "redirect" | null;
+type NFCType = "business-card" | "pet-id" | "redirect" | "nfc-yok" | null;
 
 interface Product {
   id: number;
@@ -46,6 +46,7 @@ interface Product {
   colors: string[] | null;
   specs: Record<string, string> | null;
   monthly_subscription_fee: number;
+  has_subscription?: boolean;
   is_active: boolean;
   nfc_type: NFCType;
 }
@@ -527,7 +528,8 @@ export default function ProductDetail() {
   
   // NFC tipi belirleme
   const nfcType = product.nfc_type || getNfcTypeFromCategory(product.category);
-  const requiresCustomization = nfcType === "business-card" || nfcType === "pet-id" || nfcType === "redirect";
+  const hasSub = product.has_subscription !== false && nfcType !== "nfc-yok";
+  const requiresCustomization = (nfcType === "business-card" || nfcType === "pet-id" || nfcType === "redirect");
 
   // Basit telefon numarası validasyonu - parse etmeden sadece rakam sayısını kontrol et
   const validatePhoneNumber = (phone: string): boolean => {
@@ -688,20 +690,21 @@ export default function ProductDetail() {
   };
 
   const addProductToCart = (customization: any) => {
-    const totalPrice = product.price + (product.monthly_subscription_fee || 29);
+    const totalPrice = hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price;
+    const baseCustomization: Record<string, unknown> = { renk: colors[selectedColor] };
+    if (requiresCustomization) {
+      baseCustomization.nfcType = nfcType;
+      if (hasSub) baseCustomization.subscriptionFee = product.monthly_subscription_fee || 29;
+    }
+    if (customization) Object.assign(baseCustomization, customization);
     for (let i = 0; i < quantity; i++) {
       addToCart({
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: totalPrice, // Ürün + ilk ay abonelik
+        price: totalPrice,
         image: productImage,
-        customization: {
-          renk: colors[selectedColor],
-          nfcType: nfcType,
-          subscriptionFee: product.monthly_subscription_fee || 29,
-          ...customization
-        }
+        customization: { ...baseCustomization }
       });
     }
   };
@@ -812,15 +815,21 @@ export default function ProductDetail() {
               <div className="mb-6">
                 <div className="flex items-baseline gap-3">
                   <span className="text-4xl font-bold text-gradient">
-                    ₺{(product.price + (product.monthly_subscription_fee || 29)).toFixed(0)}
+                    ₺{(hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price).toFixed(0)}
                   </span>
                 </div>
-                <p className="text-sm text-muted-foreground mt-1">
-                  ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik dahil)
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Sonraki aylar: ₺{product.monthly_subscription_fee || 29}/ay
-                </p>
+                {hasSub ? (
+                  <>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik dahil)
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Sonraki aylar: ₺{product.monthly_subscription_fee || 29}/ay
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-1">Abonelik yok</p>
+                )}
               </div>
 
               {/* Color Selection */}
@@ -871,7 +880,7 @@ export default function ProductDetail() {
               {/* Add to Cart */}
               <Button size="lg" className="w-full mb-6" onClick={handleAddToCartClick}>
                 <ShoppingCart className="w-5 h-5 mr-2" />
-                {requiresCustomization ? "Bilgileri Gir ve Sepete Ekle" : "Sepete Ekle"} - ₺{((product.price + (product.monthly_subscription_fee || 29)) * quantity).toFixed(0)}
+                {requiresCustomization ? "Bilgileri Gir ve Sepete Ekle" : "Sepete Ekle"} - ₺{((hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price) * quantity).toFixed(0)}
               </Button>
               
               {requiresCustomization && (
@@ -1235,7 +1244,7 @@ export default function ProductDetail() {
             </Button>
             <Button variant="hero" onClick={handleFormSubmit}>
               <ShoppingCart className="w-4 h-4 mr-2" />
-              Sepete Ekle - ₺{((product.price + (product.monthly_subscription_fee || 29)) * quantity).toFixed(0)}
+              Sepete Ekle - ₺{((hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price) * quantity).toFixed(0)}
             </Button>
           </DialogFooter>
         </DialogContent>
