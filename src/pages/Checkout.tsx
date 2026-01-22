@@ -28,6 +28,7 @@ import { sendOrderStatusSms } from "@/lib/sms";
 import { sendOrderStatusEmail, sendNewOrderNotificationToAdmins } from "@/lib/email";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { createPayTRToken, encodeBasket, loadPayTRIframe, checkPaymentStatus } from "@/lib/paytr";
 
 // Türkiye illeri
 const cities = [
@@ -101,6 +102,11 @@ export default function Checkout() {
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [useSavedAddress, setUseSavedAddress] = useState(false);
   const [loadingAddresses, setLoadingAddresses] = useState(false);
+
+  // PayTR state
+  const [showPayTRIframe, setShowPayTRIframe] = useState(false);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
 
   // Load saved addresses
   useEffect(() => {
@@ -289,14 +295,6 @@ export default function Checkout() {
       const discountAmount = appliedDiscount?.discountAmount || 0;
       const total = Math.max(0, subtotal + shipping - discountAmount);
       
-      // TODO: Burada Stripe integration yapılacak
-      // 1. Backend'de payment intent oluştur
-      // 2. Stripe Checkout'a yönlendir veya Stripe Elements kullan
-      // 3. Ödeme başarılı olursa sipariş oluştur
-      
-      // Şimdilik mock ödeme işlemi
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
       // Sipariş numarası oluştur
       const orderNumber = `NFC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
       
@@ -356,6 +354,86 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         .single();
 
       if (orderError) throw orderError;
+      
+      setOrderId(orderData.id);
+
+      // PayTR için sepet bilgilerini hazırla
+      const basketItems = cartItems.map(item => ({
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      }));
+      const userBasket = encodeBasket(basketItems);
+
+      // Kullanıcı bilgilerini hazırla
+      const userName = `${formData.firstName} ${formData.lastName}`;
+      const userEmail = user?.email || "";
+      const userPhone = formData.phone;
+      const userAddress = `${formData.addressLine1}${formData.addressLine2 ? `, ${formData.addressLine2}` : ''}, ${formData.district ? `${formData.district}, ` : ''}${formData.city} ${formData.postalCode}`;
+
+      // PayTR token oluştur
+      const tokenResult = await createPayTRToken({
+        order_id: orderData.id, // Order UUID
+        order_number: orderNumber, // Order number for PayTR
+        amount: Math.round(total * 100), // PayTR kuruş cinsinden ister
+        user_name: userName,
+        user_email: userEmail,
+        user_phone: userPhone,
+        user_address: userAddress,
+        user_basket: userBasket,
+        currency: "TL",
+        test_mode: import.meta.env.VITE_PAYTR_TEST_MODE === "true",
+      });
+
+      if (!tokenResult.success || !tokenResult.token) {
+        throw new Error(tokenResult.error || "PayTR token oluşturulamadı");
+      }
+
+      if (tokenResult.payment_id) {
+        setPaymentId(tokenResult.payment_id);
+      }
+
+      // PayTR iframe'i göster
+      setShowPayTRIframe(true);
+      setLoading(false);
+
+      // PayTR iframe'i yükle
+      await loadPayTRIframe(tokenResult.token);
+
+      // Ödeme durumunu kontrol et (polling)
+      const checkInterval = setInterval(async () => {
+        if (!paymentId) return;
+        
+        try {
+          const status = await checkPaymentStatus(paymentId);
+          if (status.status === "succeeded") {
+            clearInterval(checkInterval);
+            await handlePaymentSuccess(orderData.id, orderNumber, total);
+          } else if (status.status === "failed") {
+            clearInterval(checkInterval);
+            toast.error("Ödeme başarısız oldu");
+            setShowPayTRIframe(false);
+          }
+        } catch (error) {
+          console.error("Payment status check error:", error);
+        }
+      }, 2000); // Her 2 saniyede bir kontrol et
+
+      // 5 dakika sonra polling'i durdur
+      setTimeout(() => {
+        clearInterval(checkInterval);
+      }, 5 * 60 * 1000);
+
+    } catch (error: any) {
+      console.error('Payment error:', error);
+      toast.error(error.message || "Ödeme başlatılırken bir hata oluştu");
+      setLoading(false);
+    }
+  };
+
+  const handlePaymentSuccess = async (orderId: string, orderNumber: string, total: number) => {
+    try {
+      setLoading(true);
 
       // İndirim kullanımını kaydet
       if (appliedDiscount && user) {
@@ -363,7 +441,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         await supabase.from("discount_usages").insert({
           discount_id: appliedDiscount.id,
           user_id: user.id,
-          order_id: orderData.id,
+          order_id: orderId,
           discount_amount: appliedDiscount.discountAmount,
         });
 
@@ -373,7 +451,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
 
       // Sipariş kalemlerini kaydet
       const orderItems = cartItems.map(item => ({
-        order_id: orderData.id,
+        order_id: orderId,
         product_id: item.productId || item.id,
         quantity: item.quantity,
         price: item.price,
@@ -474,7 +552,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         }
       }
       
-      toast.success(`Siparişiniz alındı! Sipariş No: ${orderNumber}`);
+      toast.success(`Ödeme başarılı! Sipariş No: ${orderNumber}`);
       
       // SMS bildirimi gönder (arka planda)
       if (formData.phone) {
@@ -483,13 +561,13 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
 
       // Email bildirimi gönder (arka planda)
       if (user?.email) {
-        const orderItems = cartItems.map(item => ({
+        const orderItemsForEmail = cartItems.map(item => ({
           name: item.name,
           quantity: item.quantity,
           price: item.price,
         }));
         // Müşteriye sipariş onay emaili
-        sendOrderStatusEmail(user.email, orderNumber, "confirmed", orderItems, total).catch(console.error);
+        sendOrderStatusEmail(user.email, orderNumber, "confirmed", orderItemsForEmail, total).catch(console.error);
         
         // Admin'lere yeni sipariş bildirimi
         const customerName = profile?.first_name && profile?.last_name 
@@ -500,17 +578,18 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           customerName,
           user.email,
           total,
-          orderItems
+          orderItemsForEmail
         ).catch(console.error);
       }
       
       clearCart();
       localStorage.removeItem("appliedDiscount");
+      setShowPayTRIframe(false);
       navigate("/orders");
       
     } catch (error: any) {
-      console.error('Payment error:', error);
-      toast.error(error.message || "Sipariş oluşturulurken bir hata oluştu");
+      console.error('Payment success handler error:', error);
+      toast.error(error.message || "Sipariş işlenirken bir hata oluştu");
     } finally {
       setLoading(false);
     }
@@ -947,66 +1026,90 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                       Ödeme Yöntemi
                     </h2>
 
-                    {/* Stripe Payment Info */}
+                    {/* PayTR Payment Info */}
                     <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-6">
                       <div className="flex items-start gap-3">
                         <Shield className="w-5 h-5 text-primary mt-0.5" />
                         <div>
                           <p className="font-medium text-sm">Güvenli Ödeme</p>
                           <p className="text-xs text-muted-foreground mt-1">
-                            Kredi kartı bilgileriniz Stripe tarafından 256-bit SSL şifreleme ile korunmaktadır. 
-                            Kart bilgileriniz sunucularımızda saklanmaz.
+                            Kredi kartı bilgileriniz PayTR tarafından 256-bit SSL şifreleme ile korunmaktadır. 
+                            Kart bilgileriniz sunucularımızda saklanmaz. Ödeme işlemi PayTR güvenli altyapısı üzerinden gerçekleşir.
                           </p>
                         </div>
                       </div>
                     </div>
 
                     {/* Payment Methods */}
-                    <div className="space-y-4">
-                      <div className="border border-primary rounded-xl p-4 bg-primary/5">
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input 
-                            type="radio" 
-                            name="paymentMethod" 
-                            value="card" 
-                            defaultChecked
-                            className="w-4 h-4 text-primary"
-                          />
-                          <CreditCard className="w-5 h-5" />
-                          <span className="font-medium">Kredi / Banka Kartı</span>
-                        </label>
-                        
-                        {/* Stripe Elements Placeholder */}
-                        <div className="mt-4 p-4 bg-background rounded-lg border border-border">
-                          <p className="text-sm text-muted-foreground text-center">
-                            Stripe ödeme formu burada görünecek
-                          </p>
-                          <p className="text-xs text-muted-foreground text-center mt-2">
-                            (Stripe integration yapıldığında aktif olacak)
-                          </p>
+                    {!showPayTRIframe ? (
+                      <div className="space-y-4">
+                        <div className="border border-primary rounded-xl p-4 bg-primary/5">
+                          <label className="flex items-center gap-3 cursor-pointer">
+                            <input 
+                              type="radio" 
+                              name="paymentMethod" 
+                              value="paytr" 
+                              defaultChecked
+                              className="w-4 h-4 text-primary"
+                            />
+                            <CreditCard className="w-5 h-5" />
+                            <span className="font-medium">Kredi / Banka Kartı (PayTR)</span>
+                          </label>
+                          
+                          <div className="mt-4 p-4 bg-background rounded-lg border border-border">
+                            <p className="text-sm text-muted-foreground text-center">
+                              Güvenli ödeme için PayTR kullanıyoruz
+                            </p>
+                            <p className="text-xs text-muted-foreground text-center mt-2">
+                              "Öde" butonuna tıklayarak PayTR ödeme sayfasına yönlendirileceksiniz
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="bg-background rounded-lg border border-border p-4">
+                          <h3 className="font-semibold mb-2">Ödeme İşlemi</h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Lütfen aşağıdaki formu doldurarak ödemenizi tamamlayın.
+                          </p>
+                          <div id="paytr-iframe-container" className="w-full min-h-[600px]"></div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setShowPayTRIframe(false);
+                            setPaymentId(null);
+                            setOrderId(null);
+                          }}
+                          className="w-full"
+                        >
+                          Ödeme Sayfasını Kapat
+                        </Button>
+                      </div>
+                    )}
 
-                    <Button 
-                      variant="hero" 
-                      className="w-full mt-6" 
-                      size="lg"
-                      onClick={handlePayment}
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          İşleniyor...
-                        </>
-                      ) : (
-                        <>
-                          <Shield className="w-4 h-4" />
-                          ₺{total} Öde
-                        </>
-                      )}
-                    </Button>
+                    {!showPayTRIframe && (
+                      <Button 
+                        variant="hero" 
+                        className="w-full mt-6" 
+                        size="lg"
+                        onClick={handlePayment}
+                        disabled={loading}
+                      >
+                        {loading ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            İşleniyor...
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="w-4 h-4" />
+                            ₺{total} Öde
+                          </>
+                        )}
+                      </Button>
+                    )}
 
                     <p className="text-xs text-muted-foreground text-center mt-4">
                       "Öde" butonuna tıklayarak{" "}
