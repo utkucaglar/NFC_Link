@@ -238,8 +238,12 @@ export default function ResetPassword() {
           className="w-full max-w-md"
         >
           <Link to="/" className="flex items-center justify-center gap-2 mb-8">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary to-accent rounded-xl flex items-center justify-center">
-              <span className="text-2xl font-bold text-primary-foreground">N</span>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden">
+              <img 
+                src="/esdodesign_logo.png" 
+                alt="Esdodesign Logo" 
+                className="w-full h-full object-contain"
+              />
             </div>
             <span className="text-2xl font-bold text-gradient">Esdodesign</span>
           </Link>

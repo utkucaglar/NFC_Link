@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Wifi, Instagram, Twitter, Linkedin, Mail } from "lucide-react";
+import { Instagram, Twitter, Linkedin, Mail } from "lucide-react";
 
 export function Footer() {
   return (
@@ -9,8 +9,12 @@ export function Footer() {
           {/* Logo & Description */}
           <div className="md:col-span-2">
             <Link to="/" className="flex items-center gap-2 mb-4">
-              <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center">
-                <Wifi className="w-5 h-5 text-primary-foreground" />
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden">
+                <img 
+                  src="/esdodesign_logo.png" 
+                  alt="Esdodesign Logo" 
+                  className="w-full h-full object-contain"
+                />
               </div>
               <span className="text-xl font-bold text-gradient">Esdodesign</span>
             </Link>
