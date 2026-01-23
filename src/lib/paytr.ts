@@ -50,14 +50,28 @@ export async function createPayTRToken(request: PayTRTokenRequest): Promise<PayT
     });
 
     if (error) {
+      console.error("Edge function error:", error);
       const errorMsg = error.message || "";
+      
+      // Non-2xx status code hatası
+      if (errorMsg.includes("non-2xx") || errorMsg.includes("Edge Function returned")) {
+        console.error("Edge function non-2xx error. Function may not be deployed or has internal error.");
+        return { success: false, error: "Ödeme servisi şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." };
+      }
+      
       if (errorMsg.includes("401") || errorMsg.includes("Unauthorized")) {
         return { success: false, error: "Oturum süresi dolmuş. Lütfen tekrar giriş yapın." };
       }
+      
+      if (errorMsg.includes("FunctionsHttpError") || errorMsg.includes("FunctionsRelayError")) {
+        return { success: false, error: "Ödeme servisi yanıt vermiyor. Lütfen daha sonra tekrar deneyin." };
+      }
+      
       return { success: false, error: errorMsg || "PayTR token oluşturulamadı" };
     }
 
     if (!data?.success) {
+      console.error("PayTR API error:", data?.error);
       return { success: false, error: data?.error || "PayTR token oluşturulamadı" };
     }
 
