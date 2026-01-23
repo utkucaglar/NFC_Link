@@ -508,7 +508,7 @@ export default function Login() {
               to="/"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
-              Misafir olarak devam et →
+              Ana sayfaya Geri Dön →
             </Link>
           </div>
         </div>

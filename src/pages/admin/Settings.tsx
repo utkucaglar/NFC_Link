@@ -11,6 +11,9 @@ import {
   XCircle,
   Eye,
   EyeOff,
+  Instagram,
+  Globe,
+  MapPin,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -37,6 +40,12 @@ interface EmailSettings {
   is_enabled: boolean;
 }
 
+interface SocialSettings {
+  address: string;
+  instagram_url: string;
+  email_address: string;
+}
+
 const defaultSmsSettings: SmsSettings = {
   provider: "netgsm",
   api_key: "",
@@ -52,12 +61,20 @@ const defaultEmailSettings: EmailSettings = {
   is_enabled: false,
 };
 
+const defaultSocialSettings: SocialSettings = {
+  address: "",
+  instagram_url: "",
+  email_address: "",
+};
+
 export default function AdminSettings() {
   const [smsSettings, setSmsSettings] = useState<SmsSettings>(defaultSmsSettings);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(defaultEmailSettings);
+  const [socialSettings, setSocialSettings] = useState<SocialSettings>(defaultSocialSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingEmail, setSavingEmail] = useState(false);
+  const [savingSocial, setSavingSocial] = useState(false);
   const [testPhone, setTestPhone] = useState("");
   const [testMessage, setTestMessage] = useState("Test mesajı - Esdodesign");
   const [testEmail, setTestEmail] = useState("");
@@ -93,6 +110,17 @@ export default function AdminSettings() {
 
       if (emailData) {
         setEmailSettings(JSON.parse(emailData.value));
+      }
+
+      // Sosyal medya ayarları
+      const { data: socialData } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "social_settings")
+        .single();
+
+      if (socialData) {
+        setSocialSettings(JSON.parse(socialData.value));
       }
     } catch (err) {
       console.error("Ayarlar yüklenemedi:", err);
@@ -140,6 +168,27 @@ export default function AdminSettings() {
       toast.error("Ayarlar kaydedilemedi");
     } finally {
       setSavingEmail(false);
+    }
+  };
+
+  const handleSaveSocial = async () => {
+    setSavingSocial(true);
+    try {
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert({
+          key: "social_settings",
+          value: JSON.stringify(socialSettings),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "key" });
+
+      if (error) throw error;
+      toast.success("Sosyal medya ayarları kaydedildi");
+    } catch (err) {
+      console.error("Kaydetme hatası:", err);
+      toast.error("Ayarlar kaydedilemedi");
+    } finally {
+      setSavingSocial(false);
     }
   };
 
@@ -209,6 +258,104 @@ export default function AdminSettings() {
           <p className="text-muted-foreground">
             Site ve SMS ayarlarını yönetin
           </p>
+        </motion.div>
+
+        {/* Social Media Settings Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-pink-500/10 flex items-center justify-center">
+              <Globe className="w-5 h-5 text-pink-500" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Sosyal Medya Ayarları</h2>
+              <p className="text-sm text-muted-foreground">
+                Footer'daki sosyal medya bağlantıları
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Address */}
+            <div>
+              <Label htmlFor="address" className="flex items-center gap-2">
+                <MapPin className="w-4 h-4" />
+                Adres Bilgisi
+              </Label>
+              <Input
+                id="address"
+                value={socialSettings.address}
+                onChange={(e) =>
+                  setSocialSettings({ ...socialSettings, address: e.target.value })
+                }
+                placeholder="İstanbul, Türkiye"
+                className="mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Footer'da görünecek adres bilgisi
+              </p>
+            </div>
+
+            {/* Instagram URL */}
+            <div>
+              <Label htmlFor="instagram_url" className="flex items-center gap-2">
+                <Instagram className="w-4 h-4" />
+                Instagram Linki
+              </Label>
+              <Input
+                id="instagram_url"
+                value={socialSettings.instagram_url}
+                onChange={(e) =>
+                  setSocialSettings({ ...socialSettings, instagram_url: e.target.value })
+                }
+                placeholder="https://instagram.com/esdodesign"
+                className="mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Instagram profil sayfanızın tam URL'si
+              </p>
+            </div>
+
+            {/* Email Address */}
+            <div>
+              <Label htmlFor="contact_email" className="flex items-center gap-2">
+                <Mail className="w-4 h-4" />
+                İletişim Email Adresi
+              </Label>
+              <Input
+                id="contact_email"
+                type="email"
+                value={socialSettings.email_address}
+                onChange={(e) =>
+                  setSocialSettings({ ...socialSettings, email_address: e.target.value })
+                }
+                placeholder="info@esdodesign.com"
+                className="mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Footer'daki mail ikonu bu adrese yönlendirecek
+              </p>
+            </div>
+
+            {/* Save Button */}
+            <Button onClick={handleSaveSocial} disabled={savingSocial} className="w-full">
+              {savingSocial ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Kaydediliyor...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Sosyal Medya Ayarlarını Kaydet
+                </>
+              )}
+            </Button>
+          </div>
         </motion.div>
 
         {/* SMS Settings Card */}

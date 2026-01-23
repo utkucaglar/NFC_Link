@@ -24,6 +24,10 @@ import NFCPetId from "./pages/nfc/PetId";
 import NFCRedirect from "./pages/nfc/Redirect";
 import NotFound from "./pages/NotFound";
 import Contact from "./pages/Contact";
+// Legal Pages
+import PrivacyPolicy from "./pages/legal/PrivacyPolicy";
+import TermsOfService from "./pages/legal/TermsOfService";
+import RefundPolicy from "./pages/legal/RefundPolicy";
 // Admin Pages
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminOrders from "./pages/admin/Orders";
@@ -52,6 +56,10 @@ const App = () => (
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/contact" element={<Contact />} />
+            {/* Legal Pages */}
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/terms-of-service" element={<TermsOfService />} />
+            <Route path="/refund-policy" element={<RefundPolicy />} />
             {/* Protected Routes - Temporarily without ProtectedRoute wrapper */}
             <Route path="/my-nfc" element={<MyNFC />} />
             <Route path="/orders" element={<Orders />} />

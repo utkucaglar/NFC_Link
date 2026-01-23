@@ -1,7 +1,41 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Instagram, Twitter, Linkedin, Mail } from "lucide-react";
+import { Instagram, Mail, MapPin } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+
+interface SocialSettings {
+  address: string;
+  instagram_url: string;
+  email_address: string;
+}
 
 export function Footer() {
+  const [socialSettings, setSocialSettings] = useState<SocialSettings>({
+    address: "",
+    instagram_url: "",
+    email_address: "",
+  });
+
+  useEffect(() => {
+    const fetchSocialSettings = async () => {
+      try {
+        const { data } = await supabase
+          .from("site_settings")
+          .select("value")
+          .eq("key", "social_settings")
+          .single();
+
+        if (data) {
+          setSocialSettings(JSON.parse(data.value));
+        }
+      } catch (err) {
+        console.error("Sosyal medya ayarları yüklenemedi:", err);
+      }
+    };
+
+    fetchSocialSettings();
+  }, []);
+
   return (
     <footer className="bg-card border-t border-border">
       <div className="container mx-auto px-4 py-12">
@@ -23,19 +57,31 @@ export function Footer() {
               Kartvizitler, evcil hayvan kimlikleri ve özel yönlendirmeler için 
               akıllı çözümler sunuyoruz.
             </p>
-            <div className="flex gap-4 mt-6">
-              <a href="#" className="text-muted-foreground hover:text-primary transition-colors">
-                <Instagram className="w-5 h-5" />
-              </a>
-              <a href="#" className="text-muted-foreground hover:text-primary transition-colors">
-                <Twitter className="w-5 h-5" />
-              </a>
-              <a href="#" className="text-muted-foreground hover:text-primary transition-colors">
-                <Linkedin className="w-5 h-5" />
-              </a>
-              <a href="#" className="text-muted-foreground hover:text-primary transition-colors">
-                <Mail className="w-5 h-5" />
-              </a>
+            {socialSettings.address && (
+              <div className="flex items-center gap-2 mt-4 text-muted-foreground text-sm">
+                <MapPin className="w-4 h-4 shrink-0" />
+                <span>{socialSettings.address}</span>
+              </div>
+            )}
+            <div className="flex gap-4 mt-4">
+              {socialSettings.instagram_url && (
+                <a 
+                  href={socialSettings.instagram_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  <Instagram className="w-5 h-5" />
+                </a>
+              )}
+              {socialSettings.email_address && (
+                <a 
+                  href={`mailto:${socialSettings.email_address}`} 
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  <Mail className="w-5 h-5" />
+                </a>
+              )}
             </div>
           </div>
 
@@ -71,19 +117,19 @@ export function Footer() {
             <h4 className="font-semibold mb-4">Yasal</h4>
             <ul className="space-y-3">
               <li>
-                <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link to="/privacy-policy" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Gizlilik Politikası
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link to="/terms-of-service" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   Kullanım Koşulları
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                <Link to="/refund-policy" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                   İade Politikası
-                </a>
+                </Link>
               </li>
               <li>
                 <Link to="/contact" className="text-sm text-muted-foreground hover:text-primary transition-colors">
@@ -96,7 +142,7 @@ export function Footer() {
 
         <div className="border-t border-border mt-12 pt-8 text-center">
           <p className="text-sm text-muted-foreground">
-            © 2024 Esdodesign. Tüm hakları saklıdır.
+            © 2026 Esdodesign. Tüm hakları saklıdır.
           </p>
         </div>
       </div>
