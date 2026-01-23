@@ -30,6 +30,8 @@ const translateAuthError = (message: string): string => {
     "Email rate limit exceeded": "Çok fazla istek gönderildi. Lütfen bekleyin.",
     "For security purposes, you can only request this after": "Güvenlik nedeniyle, bu işlemi ancak",
     "User not found": "Bu e-posta adresi ile kayıtlı kullanıcı bulunamadı",
+    "duplicate key value violates unique constraint": "Bu e-posta adresi zaten kayıtlı",
+    "Email already exists": "Bu e-posta adresi zaten kayıtlı",
   };
 
   for (const [eng, tr] of Object.entries(translations)) {
@@ -140,9 +142,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = async (email: string, password: string, firstName: string, lastName: string) => {
     const redirectUrl = `${window.location.origin}/auth/callback`;
 
+    // Email'in zaten kayıtlı olup olmadığını kontrol et
+    // user_profiles tablosunda email kontrolü yap
+    const { data: existingUser, error: checkError } = await supabase
+      .from('user_profiles')
+      .select('email')
+      .eq('email', email.toLowerCase().trim())
+      .maybeSingle();
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      // PGRST116 = no rows returned (normal durum)
+      // Diğer hatalar gerçek hatalar
+      console.error('Email kontrol hatası:', checkError);
+    }
+
+    if (existingUser) {
+      const errorMessage = "Bu e-posta adresi zaten kayıtlı. Lütfen farklı bir e-posta adresi kullanın.";
+      toast.error(errorMessage);
+      throw new Error(errorMessage);
+    }
+
     // Supabase'de email confirmation'ı disable ettiğimiz için otomatik confirm edilir
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: email.toLowerCase().trim(),
       password,
       options: {
         data: {
@@ -178,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.toLowerCase().trim(),
       password,
     });
 
@@ -240,7 +262,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Şimdilik: Supabase'in kendi email sistemini kullan
     // Production'da Resend kullanmak için Supabase Dashboard'da email hook ayarlanmalı
     
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.toLowerCase().trim(), {
       redirectTo: redirectUrl,
     });
 

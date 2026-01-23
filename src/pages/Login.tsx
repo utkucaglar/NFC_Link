@@ -138,7 +138,8 @@ export default function Login() {
 
     setForgotPasswordLoading(true);
     try {
-      await resetPassword(forgotPasswordEmail);
+      // Email'i lowercase'e çevir
+      await resetPassword(forgotPasswordEmail.toLowerCase().trim());
       setShowForgotPassword(false);
       setForgotPasswordEmail("");
     } catch (error) {
@@ -185,11 +186,13 @@ export default function Login() {
 
     try {
       if (isLogin) {
-        await signIn(email, password);
+        // Email'i lowercase'e çevir
+        await signIn(email.toLowerCase().trim(), password);
         // Redirect parametresine göre yönlendir
         navigate(redirectTo);
       } else {
-        await signUp(email, password, firstName, lastName);
+        // Email'i lowercase'e çevir
+        await signUp(email.toLowerCase().trim(), password, firstName, lastName);
         setShowVerification(true);
         setPassword("");
         setConfirmPassword("");
