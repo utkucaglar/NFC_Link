@@ -12,7 +12,6 @@ export interface PayTRTokenRequest {
   user_address: string;
   user_basket: string; // Base64 encoded
   currency?: string;
-  test_mode?: boolean;
 }
 
 export interface PayTRTokenResponse {
