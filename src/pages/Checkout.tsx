@@ -252,12 +252,18 @@ export default function Checkout() {
   };
 
   const validateShippingForm = () => {
-    // If using saved address, no need to validate form
-    if (useSavedAddress && selectedAddressId) {
-      return true;
+    const newErrors: {[key: string]: string} = {};
+
+    // Kayıtlı adres kullanılsa bile telefon kontrolü yap
+    if (!formData.phone || !formData.phone.trim()) {
+      newErrors.phone = "Telefon numarası gereklidir";
     }
 
-    const newErrors: {[key: string]: string} = {};
+    // If using saved address, only check phone
+    if (useSavedAddress && selectedAddressId) {
+      setErrors(newErrors);
+      return Object.keys(newErrors).length === 0;
+    }
     
     if (!formData.firstName.trim()) newErrors.firstName = "İsim gereklidir";
     if (!formData.lastName.trim()) newErrors.lastName = "Soyisim gereklidir";
@@ -290,14 +296,22 @@ export default function Checkout() {
     setLoading(true);
     
     try {
+      // Telefon kontrolü - PayTR için zorunlu
+      if (!formData.phone || !formData.phone.trim()) {
+        toast.error("Telefon numarası gereklidir");
+        setLoading(false);
+        setCurrentStep(1); // Adres adımına geri dön
+        return;
+      }
+
       // Calculate totals
       const subtotal = cartTotal;
       const shipping = 0; // Ücretsiz kargo
       const discountAmount = appliedDiscount?.discountAmount || 0;
       const total = Math.max(0, subtotal + shipping - discountAmount);
       
-      // Sipariş numarası oluştur
-      const orderNumber = `NFC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+      // Sipariş numarası oluştur (PayTR sadece alfanumerik kabul eder, tire yok)
+      const orderNumber = `NFC${new Date().getFullYear()}${Date.now().toString().slice(-8)}`;
       
       // Teslimat adresi oluştur
       const shippingAddress = `${formData.firstName} ${formData.lastName}
