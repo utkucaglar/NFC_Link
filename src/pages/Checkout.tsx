@@ -414,7 +414,8 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       setShowPayTRIframe(true);
       setLoading(false);
 
-      // PayTR iframe'i yükle
+      // DOM güncellemesini bekle, sonra iframe'i yükle
+      await new Promise(resolve => setTimeout(resolve, 100));
       await loadPayTRIframe(tokenResult.token);
 
       // Ödeme durumunu kontrol et (polling)
