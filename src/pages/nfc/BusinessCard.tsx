@@ -190,16 +190,30 @@ export default function NFCBusinessCard() {
     // vCard standardı CRLF kullanır
     const vcard = lines.join("\r\n");
 
-    // UTF-8 BOM ile Blob oluştur (Türkçe karakter desteği)
-    const blob = new Blob(["\ufeff" + vcard], { type: "text/vcard;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${data.name.replace(/\s+/g, "_")}.vcf`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // iOS/Safari kontrolü
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isIOS || isSafari) {
+      // iOS ve Safari için data URI kullan
+      // Base64 encode et
+      const base64 = btoa(unescape(encodeURIComponent(vcard)));
+      const dataUri = `data:text/vcard;base64,${base64}`;
+      
+      // Yeni pencerede aç - Safari vCard'ı tanıyacak ve Kişiler'e ekleme seçeneği sunacak
+      window.open(dataUri, "_blank");
+    } else {
+      // Diğer tarayıcılar için normal indirme
+      const blob = new Blob(["\ufeff" + vcard], { type: "text/vcard;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${data.name.replace(/\s+/g, "_")}.vcf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
   };
 
   return (
