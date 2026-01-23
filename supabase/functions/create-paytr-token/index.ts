@@ -1,8 +1,5 @@
 // Supabase Edge Function - Create PayTR Payment Token
 // Deploy: npx supabase functions deploy create-paytr-token
-//
-// Bu fonksiyon PayTR ödeme token'ı oluşturur
-// Güvenlik: JWT doğrulaması yapılır, sadece authenticated kullanıcılar kullanabilir
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -12,19 +9,43 @@ const corsHeaders = {
 };
 
 interface PayTRRequest {
-  order_id: string; // Order UUID
-  order_number: string; // Order number for PayTR (merchant_oid)
+  order_id: string;
+  order_number: string;
   amount: number;
   user_name: string;
   user_email: string;
   user_phone: string;
   user_address: string;
-  user_basket: string; // Base64 encoded basket items
+  user_basket: string; // Base64 encoded JSON array
   currency?: string;
 }
 
+// HMAC-SHA256 hesapla ve Base64 encode et (PayTR standardı)
+async function createPayTRHash(data: string, key: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(key);
+  const dataToSign = encoder.encode(data);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    keyData,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const signature = await crypto.subtle.sign("HMAC", cryptoKey, dataToSign);
+  const hashArray = new Uint8Array(signature);
+  
+  // Base64 encode
+  let binary = "";
+  for (let i = 0; i < hashArray.length; i++) {
+    binary += String.fromCharCode(hashArray[i]);
+  }
+  return btoa(binary);
+}
+
 Deno.serve(async (req) => {
-  // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -39,24 +60,15 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      {
-        global: {
-          headers: { Authorization: authHeader },
-        },
-      }
+      { global: { headers: { Authorization: authHeader } } }
     );
 
-    // Kullanıcı bilgilerini al
-    const {
-      data: { user },
-      error: userError,
-    } = await supabaseClient.auth.getUser();
-
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
     if (userError || !user) {
       throw new Error("Unauthorized");
     }
 
-    // Request body'yi al
+    // Request body
     const body: PayTRRequest = await req.json();
     const {
       order_id,
@@ -75,7 +87,7 @@ Deno.serve(async (req) => {
       throw new Error("Missing required fields");
     }
 
-    // PayTR API bilgilerini al (environment variables'dan)
+    // PayTR API bilgileri
     const merchant_id = Deno.env.get("PAYTR_MERCHANT_ID");
     const merchant_key = Deno.env.get("PAYTR_MERCHANT_KEY");
     const merchant_salt = Deno.env.get("PAYTR_MERCHANT_SALT");
@@ -84,54 +96,55 @@ Deno.serve(async (req) => {
       throw new Error("PayTR credentials not configured");
     }
 
-    // Kullanıcının IP adresini al
-    const user_ip = req.headers.get("x-forwarded-for") || 
-                    req.headers.get("x-real-ip") || 
+    // Kullanıcı IP
+    const user_ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+                    req.headers.get("x-real-ip") ||
                     "127.0.0.1";
 
-    // PayTR token oluşturma parametreleri
-    const payment_type = "CC"; // Credit Card
-    const installment_count = 0; // Taksit yok
-    const no_installment = 1; // Taksit yok
-    const max_installment = 0;
-    const test_mode_value = 0; // Production mode - test mode kapalı
+    // PayTR parametreleri
+    const no_installment = "1";
+    const max_installment = "0";
+    const test_mode = Deno.env.get("PAYTR_TEST_MODE") || "0";
+    const timeout_limit = "30";
+    const debug_on = "0";
     const lang = "tr";
 
-    // Hash oluştur (PayTR dokümantasyonuna göre)
-    // merchant_id + user_ip + merchant_oid + email + payment_amount + payment_type + installment_count + currency + test_mode + no_installment + merchant_salt
-    const hashString = `${merchant_id}${user_ip}${order_number}${user_email}${amount}${payment_type}${installment_count}${currency}${test_mode_value}${no_installment}${merchant_salt}`;
-    
-    // SHA256 hash oluştur
-    const hashBuffer = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(hashString)
-    );
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hash = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    // Callback ve yönlendirme URL'leri
+    const baseUrl = Deno.env.get("SITE_URL") || "https://nfclink.com.tr";
+    const merchant_ok_url = `${baseUrl}/orders?status=success`;
+    const merchant_fail_url = `${baseUrl}/orders?status=failed`;
 
-    // PayTR API'ye token isteği gönder
-    const paytrFormData = new FormData();
-    paytrFormData.append("merchant_id", merchant_id);
-    paytrFormData.append("user_ip", user_ip);
-    paytrFormData.append("merchant_oid", order_number);
-    paytrFormData.append("email", user_email);
-    paytrFormData.append("payment_amount", amount.toString());
-    paytrFormData.append("payment_type", payment_type);
-    paytrFormData.append("installment_count", installment_count.toString());
-    paytrFormData.append("currency", currency);
-    paytrFormData.append("test_mode", test_mode_value.toString());
-    paytrFormData.append("no_installment", no_installment.toString());
-    paytrFormData.append("max_installment", max_installment.toString());
-    paytrFormData.append("user_name", user_name);
-    paytrFormData.append("user_address", user_address);
-    paytrFormData.append("user_phone", user_phone);
-    paytrFormData.append("user_basket", user_basket);
-    paytrFormData.append("lang", lang);
-    paytrFormData.append("hash", hash);
+    // PayTR Hash oluştur
+    // Format: merchant_id + user_ip + merchant_oid + email + payment_amount + user_basket + no_installment + max_installment + currency + test_mode
+    const hashStr = `${merchant_id}${user_ip}${order_number}${user_email}${amount}${user_basket}${no_installment}${max_installment}${currency}${test_mode}`;
+    const paytr_token = await createPayTRHash(hashStr + merchant_salt, merchant_key);
+
+    // PayTR API isteği
+    const formData = new URLSearchParams();
+    formData.append("merchant_id", merchant_id);
+    formData.append("user_ip", user_ip);
+    formData.append("merchant_oid", order_number);
+    formData.append("email", user_email);
+    formData.append("payment_amount", amount.toString());
+    formData.append("paytr_token", paytr_token);
+    formData.append("user_basket", user_basket);
+    formData.append("debug_on", debug_on);
+    formData.append("no_installment", no_installment);
+    formData.append("max_installment", max_installment);
+    formData.append("user_name", user_name);
+    formData.append("user_address", user_address);
+    formData.append("user_phone", user_phone);
+    formData.append("merchant_ok_url", merchant_ok_url);
+    formData.append("merchant_fail_url", merchant_fail_url);
+    formData.append("timeout_limit", timeout_limit);
+    formData.append("currency", currency);
+    formData.append("test_mode", test_mode);
+    formData.append("lang", lang);
 
     const paytrResponse = await fetch("https://www.paytr.com/odeme/api/get-token", {
       method: "POST",
-      body: paytrFormData,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString(),
     });
 
     const paytrResult = await paytrResponse.json();
@@ -141,26 +154,21 @@ Deno.serve(async (req) => {
       throw new Error(paytrResult.reason || "PayTR token oluşturulamadı");
     }
 
-    // Payment kaydını veritabanına kaydet
+    // Payment kaydı oluştur
     const { data: paymentData, error: paymentError } = await supabaseClient
       .from("payments")
       .insert({
         user_id: user.id,
-        order_id: order_id, // Order UUID
-        amount: amount / 100, // Kuruştan TL'ye çevir
+        order_id: order_id,
+        amount: amount / 100,
         currency: currency,
         status: "pending",
         payment_method: "paytr",
         paytr_merchant_id: merchant_id,
         paytr_token: paytrResult.token,
-        paytr_order_id: order_number, // Order number for PayTR
+        paytr_order_id: order_number,
         description: `PayTR ödeme - Sipariş: ${order_number}`,
-        metadata: {
-          user_name,
-          user_email,
-          user_phone,
-          user_address,
-        },
+        metadata: { user_name, user_email, user_phone, user_address },
       })
       .select()
       .single();
@@ -176,19 +184,13 @@ Deno.serve(async (req) => {
         token: paytrResult.token,
         payment_id: paymentData.id,
       }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
   } catch (error: any) {
     console.error("PayTR token error:", error.message);
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200, // Return 200 to avoid CORS issues
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
   }
 });
