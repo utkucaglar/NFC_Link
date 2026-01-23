@@ -28,6 +28,7 @@ import { sendOrderStatusSms } from "@/lib/sms";
 import { sendOrderStatusEmail, sendNewOrderNotificationToAdmins } from "@/lib/email";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { toUpperCaseTurkish } from "@/lib/helpers";
 import { createPayTRToken, encodeBasket, loadPayTRIframe, checkPaymentStatus } from "@/lib/paytr";
 
 // Türkiye illeri
@@ -616,7 +617,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       const { data: discount, error } = await supabase
         .from("discounts")
         .select("*")
-        .eq("code", discountCode.trim().toUpperCase())
+        .eq("code", toUpperCaseTurkish(discountCode.trim()))
         .eq("is_active", true)
         .single();
 
@@ -1180,7 +1181,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                           <Input
                             value={discountCode}
                             onChange={(e) => {
-                              setDiscountCode(e.target.value.toUpperCase());
+                              setDiscountCode(toUpperCaseTurkish(e.target.value));
                               setDiscountError("");
                             }}
                             placeholder="Kod girin"

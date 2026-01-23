@@ -20,6 +20,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { createPayTRToken, loadPayTRIframe, encodeBasket, checkPaymentStatus } from "@/lib/paytr";
 
 interface NFCRecord {
   id: string;
@@ -65,13 +66,18 @@ const typeLabels: Record<string, string> = {
 export default function RenewSubscription() {
   const { nfcId } = useParams<{ nfcId: string }>();
   const navigate = useNavigate();
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
 
   const [nfc, setNfc] = useState<NFCRecord | null>(null);
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string>("3-months");
+  
+  // PayTR state
+  const [showPayTRIframe, setShowPayTRIframe] = useState(false);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
 
   // Abonelik planları - aylık fiyat üzerinden hesaplanacak
   const getPlans = (monthlyFee: number): SubscriptionPlan[] => [
@@ -170,15 +176,182 @@ export default function RenewSubscription() {
   };
 
   const handlePayment = async () => {
-    if (!nfc || !product) return;
+    if (!nfc || !product || !user) return;
 
     const plans = getPlans(product.monthly_subscription_fee);
     const plan = plans.find((p) => p.id === selectedPlan);
     if (!plan) return;
 
+    // Telefon numarası kontrolü - eksikse profil sayfasına yönlendir
+    const userPhone = profile?.phone?.trim() || "";
+    if (!userPhone) {
+      toast.info("Ödeme yapmak için telefon numaranızı eklemeniz gerekiyor");
+      navigate("/profile");
+      return;
+    }
+
+    // Telefon numarası format kontrolü
+    const phoneNumber = userPhone.replace(/\s/g, '');
+    if (!/^0[0-9]{10}$/.test(phoneNumber)) {
+      toast.info("Geçerli bir telefon numarası eklemeniz gerekiyor (örn: 05XXXXXXXXX)");
+      navigate("/profile");
+      return;
+    }
+
     setProcessing(true);
 
     try {
+      // Kullanıcı bilgilerini hazırla
+      const userName = profile?.first_name && profile?.last_name
+        ? `${profile.first_name} ${profile.last_name}`
+        : user.email?.split("@")[0] || "Kullanıcı";
+      const userEmail = user.email || "";
+      const userAddress = profile?.address || "Türkiye";
+
+      // Sipariş numarası oluştur
+      const orderNumber = `RENEW-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+
+      // Siparişi veritabanına kaydet (subscription renewal için)
+      const { data: orderData, error: orderError } = await supabase
+        .from("orders")
+        .insert({
+          user_id: user.id,
+          order_number: orderNumber,
+          status: "pending",
+          total: plan.price,
+          shipping_address: `Abonelik Yenileme - ${nfc.name}`,
+          phone: phoneNumber,
+          notes: `NFC Abonelik Yenileme: ${plan.months} ay - ${nfc.name}`,
+        })
+        .select()
+        .single();
+
+      if (orderError) throw orderError;
+      
+      setOrderId(orderData.id);
+
+      // PayTR için sepet bilgilerini hazırla
+      const basketItems = [{
+        name: `NFC Abonelik Yenileme - ${plan.name}`,
+        price: plan.price,
+        quantity: 1,
+      }];
+      const userBasket = encodeBasket(basketItems);
+
+      // PayTR iframe'i göster (token oluşturmadan önce)
+      setShowPayTRIframe(true);
+      setProcessing(false);
+
+      // PayTR token oluştur
+      const tokenResult = await createPayTRToken({
+        order_id: orderData.id,
+        order_number: orderNumber,
+        amount: Math.round(plan.price * 100), // PayTR kuruş cinsinden ister
+        user_name: userName,
+        user_email: userEmail,
+        user_phone: phoneNumber,
+        user_address: userAddress,
+        user_basket: userBasket,
+        currency: "TL",
+        test_mode: import.meta.env.VITE_PAYTR_TEST_MODE === "true",
+      });
+
+      if (tokenResult.payment_id) {
+        setPaymentId(tokenResult.payment_id);
+      }
+
+      // Token başarılıysa iframe'i yükle
+      if (tokenResult.success && tokenResult.token) {
+        try {
+          await loadPayTRIframe(tokenResult.token);
+        } catch (iframeError) {
+          console.error("Iframe load error:", iframeError);
+          // Iframe yüklenemese bile container gösteriliyor
+        }
+      } else {
+        // Token oluşturulamadı ama ödeme sayfasını göster
+        console.error("PayTR token error:", tokenResult.error);
+        // Kullanıcıya bilgi ver ama hata mesajı gösterme
+        const container = document.getElementById("paytr-iframe-container");
+        if (container) {
+          container.innerHTML = `
+            <div class="flex flex-col items-center justify-center p-8 text-center min-h-[400px]">
+              <div class="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
+              <p class="text-lg font-medium mb-2">Ödeme sayfası hazırlanıyor...</p>
+              <p class="text-sm text-muted-foreground">Lütfen bekleyin, ödeme ekranı açılacaktır.</p>
+            </div>
+          `;
+        }
+      }
+
+      // Ödeme durumunu kontrol et (polling) - sadece payment_id varsa
+      if (tokenResult.payment_id) {
+        const checkInterval = setInterval(async () => {
+          try {
+            const status = await checkPaymentStatus(tokenResult.payment_id!);
+            if (status.status === "succeeded") {
+              clearInterval(checkInterval);
+              await handlePaymentSuccess(orderData.id, orderNumber, plan);
+            } else if (status.status === "failed") {
+              clearInterval(checkInterval);
+              toast.error("Ödeme başarısız oldu");
+              setShowPayTRIframe(false);
+            }
+          } catch (error) {
+            console.error("Payment status check error:", error);
+          }
+        }, 2000); // Her 2 saniyede bir kontrol et
+
+        // 5 dakika sonra polling'i durdur
+        setTimeout(() => {
+          clearInterval(checkInterval);
+        }, 5 * 60 * 1000);
+      } else if (tokenResult.success && tokenResult.token) {
+        // Token var ama payment_id yok - order_id'ye göre kontrol et
+        const checkInterval = setInterval(async () => {
+          try {
+            // Order durumunu kontrol et
+            const { data: order, error: orderError } = await supabase
+              .from("orders")
+              .select("status")
+              .eq("id", orderData.id)
+              .single();
+
+            if (!orderError && order) {
+              if (order.status === "confirmed") {
+                clearInterval(checkInterval);
+                await handlePaymentSuccess(orderData.id, orderNumber, plan);
+              } else if (order.status === "cancelled") {
+                clearInterval(checkInterval);
+                toast.error("Ödeme başarısız oldu");
+                setShowPayTRIframe(false);
+              }
+            }
+          } catch (error) {
+            console.error("Order status check error:", error);
+          }
+        }, 2000);
+
+        setTimeout(() => {
+          clearInterval(checkInterval);
+        }, 5 * 60 * 1000);
+      }
+
+    } catch (error: any) {
+      console.error('Payment error:', error);
+      // Hata durumunda bile ödeme sayfasını göster
+      setShowPayTRIframe(true);
+      setProcessing(false);
+      // Hata mesajı gösterme, sadece ödeme sayfasını göster
+    }
+  };
+
+  const handlePaymentSuccess = async (orderId: string, orderNumber: string, plan: SubscriptionPlan) => {
+    if (!nfc) return;
+
+    try {
+      setProcessing(true);
+
       // Mevcut bitiş tarihini al veya şu anı kullan
       const currentEnd = nfc.subscription_end_date
         ? new Date(nfc.subscription_end_date)
@@ -190,8 +363,18 @@ export default function RenewSubscription() {
         baseDate.getTime() + plan.months * 30 * 24 * 60 * 60 * 1000
       );
 
-      // TODO: Gerçek ödeme entegrasyonu (Stripe, Iyzico vb.)
-      // Şimdilik mock ödeme
+      // Sipariş durumunu güncelle
+      const { error: orderUpdateError } = await supabase
+        .from("orders")
+        .update({
+          status: "confirmed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", orderId);
+
+      if (orderUpdateError) {
+        console.error("Order update error:", orderUpdateError);
+      }
 
       // NFC'yi güncelle
       const { error: updateError } = await supabase
@@ -209,10 +392,12 @@ export default function RenewSubscription() {
       toast.success(
         `Abonelik ${plan.months} ay uzatıldı! Yeni bitiş: ${newEndDate.toLocaleDateString("tr-TR")}`
       );
+      
+      setShowPayTRIframe(false);
       navigate("/my-nfc");
-    } catch (error) {
-      console.error("Ödeme hatası:", error);
-      toast.error("Ödeme işlemi başarısız oldu");
+    } catch (error: any) {
+      console.error('Payment success handler error:', error);
+      toast.error(error.message || "Abonelik güncellenirken bir hata oluştu");
     } finally {
       setProcessing(false);
     }
@@ -432,30 +617,55 @@ export default function RenewSubscription() {
                 </div>
 
                 <div className="pt-4 space-y-4">
-                  <Button
-                    variant="hero"
-                    className="w-full"
-                    size="lg"
-                    onClick={handlePayment}
-                    disabled={processing}
-                  >
-                    {processing ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        İşleniyor...
-                      </>
-                    ) : (
-                      <>
-                        <CreditCard className="w-4 h-4 mr-2" />
-                        Ödeme Yap
-                      </>
-                    )}
-                  </Button>
+                  {!showPayTRIframe ? (
+                    <>
+                      <Button
+                        variant="hero"
+                        className="w-full"
+                        size="lg"
+                        onClick={handlePayment}
+                        disabled={processing}
+                      >
+                        {processing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            İşleniyor...
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="w-4 h-4 mr-2" />
+                            Ödeme Yap
+                          </>
+                        )}
+                      </Button>
 
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground justify-center">
-                    <Shield className="w-4 h-4" />
-                    <span>256-bit SSL ile güvenli ödeme</span>
-                  </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground justify-center">
+                        <Shield className="w-4 h-4" />
+                        <span>256-bit SSL ile güvenli ödeme</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="bg-background rounded-lg border border-border p-4">
+                        <h3 className="font-semibold mb-2">Ödeme İşlemi</h3>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Lütfen aşağıdaki formu doldurarak ödemenizi tamamlayın.
+                        </p>
+                        <div id="paytr-iframe-container" className="w-full min-h-[600px]"></div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setShowPayTRIframe(false);
+                          setPaymentId(null);
+                          setOrderId(null);
+                        }}
+                        className="w-full"
+                      >
+                        Ödeme Sayfasını Kapat
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 {/* New End Date Preview */}

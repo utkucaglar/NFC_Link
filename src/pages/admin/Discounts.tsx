@@ -32,6 +32,7 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { toUpperCaseTurkish } from "@/lib/helpers";
 
 interface Discount {
   id: string;
@@ -126,7 +127,7 @@ export default function AdminDiscounts() {
     try {
       const discountData = {
         ...editingDiscount,
-        code: editingDiscount.code.toUpperCase(),
+        code: toUpperCaseTurkish(editingDiscount.code),
         updated_at: new Date().toISOString(),
       };
 
@@ -442,7 +443,7 @@ export default function AdminDiscounts() {
                 <Input
                   id="code"
                   value={editingDiscount?.code || ""}
-                  onChange={(e) => setEditingDiscount({ ...editingDiscount, code: e.target.value.toUpperCase() })}
+                  onChange={(e) => setEditingDiscount({ ...editingDiscount, code: toUpperCaseTurkish(e.target.value) })}
                   placeholder="YENIUYE20"
                   className="font-mono uppercase"
                 />

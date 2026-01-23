@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { BusinessCardForm, BusinessCardData, defaultBusinessCardData } from "@/components/forms/BusinessCardForm";
 import { PetIdForm, PetIdData, defaultPetIdData } from "@/components/forms/PetIdForm";
 import { RedirectForm, RedirectData, defaultRedirectData } from "@/components/forms/RedirectForm";
-import { getProductImageByColor, DEFAULT_COLORS } from "@/lib/helpers";
+import { getProductImageByColor, DEFAULT_COLORS, toUpperCaseTurkish } from "@/lib/helpers";
 
 // Kişiselleştirme gerektiren NFC tipleri
 const CUSTOMIZATION_NFC_TYPES = ["business-card", "pet-id", "redirect"];
@@ -539,7 +539,7 @@ export default function Cart() {
       const { data: discount, error } = await supabase
         .from("discounts")
         .select("*")
-        .eq("code", couponCode.trim().toUpperCase())
+        .eq("code", toUpperCaseTurkish(couponCode.trim()))
         .eq("is_active", true)
         .single();
 
@@ -1050,7 +1050,7 @@ export default function Cart() {
                             placeholder="İndirim kodu" 
                             value={couponCode}
                             onChange={(e) => {
-                              setCouponCode(e.target.value.toUpperCase());
+                              setCouponCode(toUpperCaseTurkish(e.target.value));
                               setDiscountError("");
                             }}
                             className="pl-10 uppercase"

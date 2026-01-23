@@ -574,7 +574,7 @@ export default function ProductDetail() {
   };
 
   // Form doğrulama
-  const validateBusinessCardForm = (): boolean => {
+  const validateBusinessCardForm = (): { isValid: boolean; errors: Record<string, string> } => {
     const errors: Record<string, string> = {};
     if (!businessCardData.name.trim()) errors.name = "İsim soyisim gereklidir";
     if (!businessCardData.title.trim()) errors.title = "Meslek ünvanı gereklidir";
@@ -600,10 +600,10 @@ export default function ProductDetail() {
     }
     
     setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    return { isValid: Object.keys(errors).length === 0, errors };
   };
 
-  const validatePetIdForm = (): boolean => {
+  const validatePetIdForm = (): { isValid: boolean; errors: Record<string, string> } => {
     const errors: Record<string, string> = {};
     if (!petIdData.petName.trim()) errors.petName = "Evcil hayvan adı gereklidir";
     if (!petIdData.ownerName.trim()) errors.ownerName = "Sahibi adı gereklidir";
@@ -624,16 +624,16 @@ export default function ProductDetail() {
     }
     
     setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    return { isValid: Object.keys(errors).length === 0, errors };
   };
 
-  const validateRedirectForm = (): boolean => {
+  const validateRedirectForm = (): { isValid: boolean; errors: Record<string, string> } => {
     const errors: Record<string, string> = {};
     if (!redirectData.partnerName1.trim()) errors.partnerName1 = "1. kişi adı gereklidir";
     if (!redirectData.partnerName2.trim()) errors.partnerName2 = "2. kişi adı gereklidir";
     if (!redirectData.relationshipStartDate) errors.relationshipStartDate = "İlişki başlangıç tarihi gereklidir";
     setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    return { isValid: Object.keys(errors).length === 0, errors };
   };
 
   // Sepete ekleme işleyicisi
@@ -658,24 +658,24 @@ export default function ProductDetail() {
     // React state güncellemeleri asenkron olduğu için biraz daha uzun bekleyelim
     await new Promise(resolve => setTimeout(resolve, 200));
 
-    let isValid = false;
+    let validationResult: { isValid: boolean; errors: Record<string, string> } | null = null;
     let customizationData: any = null;
 
     console.log("handleFormSubmit - businessCardData.phone:", businessCardData.phone);
     console.log("handleFormSubmit - petIdData.ownerPhone:", petIdData.ownerPhone);
 
     if (nfcType === "business-card") {
-      isValid = validateBusinessCardForm();
-      if (isValid) customizationData = { type: "business-card", ...businessCardData };
+      validationResult = validateBusinessCardForm();
+      if (validationResult.isValid) customizationData = { type: "business-card", ...businessCardData };
     } else if (nfcType === "pet-id") {
-      isValid = validatePetIdForm();
-      if (isValid) customizationData = { type: "pet-id", ...petIdData };
+      validationResult = validatePetIdForm();
+      if (validationResult.isValid) customizationData = { type: "pet-id", ...petIdData };
     } else if (nfcType === "redirect") {
-      isValid = validateRedirectForm();
-      if (isValid) customizationData = { type: "redirect", ...redirectData };
+      validationResult = validateRedirectForm();
+      if (validationResult.isValid) customizationData = { type: "redirect", ...redirectData };
     }
 
-    if (isValid && customizationData) {
+    if (validationResult?.isValid && customizationData) {
       addProductToCart(customizationData);
       setIsFormOpen(false);
       // Formu sıfırla
@@ -686,7 +686,51 @@ export default function ProductDetail() {
       // Email validasyon durumunu da sıfırla
       setEmailValidated(false);
       setEmailValidationAttempted(false);
+    } else if (validationResult) {
+      // Validasyon başarısız oldu, ilk hatalı alana scroll yap
+      scrollToFirstError(validationResult.errors);
     }
+  };
+
+  // İlk hatalı alana scroll yapma fonksiyonu
+  const scrollToFirstError = (errors: Record<string, string>) => {
+    // State güncellemesinin tamamlanması için kısa bir süre bekle
+    setTimeout(() => {
+      let firstErrorField: string | null = null;
+      
+      // İlk hatayı bul (sıralama önemli - formdaki sıraya göre)
+      if (nfcType === "business-card") {
+        // BusinessCard form alan sırası: name, title, phone, email
+        if (errors.name) firstErrorField = "bc-name";
+        else if (errors.title) firstErrorField = "bc-title";
+        else if (errors.phone) firstErrorField = "bc-phone";
+        else if (errors.email) firstErrorField = "bc-email";
+      } else if (nfcType === "pet-id") {
+        // PetId form alan sırası: petName, ownerName, ownerPhone, microchipNumber
+        if (errors.petName) firstErrorField = "pet-name";
+        else if (errors.ownerName) firstErrorField = "owner-name";
+        else if (errors.ownerPhone) firstErrorField = "owner-phone";
+        else if (errors.microchipNumber) firstErrorField = "microchip";
+      } else if (nfcType === "redirect") {
+        // Redirect form alan sırası: partnerName1, partnerName2, relationshipStartDate
+        if (errors.partnerName1) firstErrorField = "partnerName1";
+        else if (errors.partnerName2) firstErrorField = "partnerName2";
+        else if (errors.relationshipStartDate) firstErrorField = "relationshipStartDate";
+      }
+
+      if (firstErrorField) {
+        const errorElement = document.getElementById(firstErrorField);
+        if (errorElement) {
+          // Input alanına scroll yap, merkeze al
+          errorElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+          // Input'a focus yap
+          errorElement.focus();
+        }
+      }
+    }, 100);
   };
 
   const addProductToCart = (customization: any) => {

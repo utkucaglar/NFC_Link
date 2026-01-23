@@ -105,21 +105,13 @@ export default function NFCBusinessCard() {
           }
         }
 
-        // Tarama sayısını artır
-        await supabase
-          .from("nfcs")
-          .update({ 
-            scan_count: (nfcData.scan_count || 0) + 1,
-            last_scanned_at: new Date().toISOString()
-          })
-          .eq("id", nfcData.id);
-
-        // NFC scan kaydı oluştur
+        // NFC scan kaydı oluştur (trigger otomatik olarak scan_count'u artıracak)
         await supabase
           .from("nfc_scans")
           .insert({
             nfc_id: nfcData.id,
             user_agent: navigator.userAgent,
+            scanned_at: new Date().toISOString(),
           });
 
         setData(nfcData.data as BusinessCardData);

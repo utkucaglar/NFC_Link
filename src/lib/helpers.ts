@@ -117,6 +117,23 @@ export const getProductImagesByColor = async (
 };
 
 /**
+ * Türkçe karakterleri doğru şekilde büyük harfe çevirir
+ * JavaScript'in toUpperCase() fonksiyonu Türkçe karakterler için doğru çalışmaz
+ * Örnek: "i" → "İ", "ı" → "I"
+ */
+export const toUpperCaseTurkish = (str: string): string => {
+  return str
+    .replace(/i/g, "İ")
+    .replace(/ı/g, "I")
+    .replace(/ş/g, "Ş")
+    .replace(/ğ/g, "Ğ")
+    .replace(/ü/g, "Ü")
+    .replace(/ö/g, "Ö")
+    .replace(/ç/g, "Ç")
+    .toUpperCase();
+};
+
+/**
  * Fiyatı Türk Lirası formatında döndürür
  */
 export const formatPrice = (price: number): string => {

@@ -131,6 +131,7 @@ export function RedirectForm({ data, onChange, errors = {}, onErrorClear }: Redi
       <div className="space-y-2">
         <Label htmlFor="relationshipStartDate">İlişki Başlangıç Tarihi *</Label>
         <DatePicker
+          id="relationshipStartDate"
           value={data.relationshipStartDate}
           onChange={(value) => handleChange("relationshipStartDate", value)}
           placeholder="Tarih seçin"

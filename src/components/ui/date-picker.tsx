@@ -10,6 +10,7 @@ interface DatePickerProps {
   disabled?: boolean;
   min?: string;
   max?: string;
+  id?: string;
 }
 
 const months = [
@@ -27,6 +28,7 @@ export function DatePicker({
   disabled = false,
   min,
   max,
+  id,
 }: DatePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [currentDate, setCurrentDate] = React.useState(() => {
@@ -134,6 +136,7 @@ export function DatePicker({
     <div ref={inputRef} className={cn("relative", className)}>
       <button
         type="button"
+        id={id}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         className={cn(

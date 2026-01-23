@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { User, Mail, Phone, MapPin, CreditCard, Bell, Shield, LogOut, Plus, Edit, Trash2, Loader2, Star } from "lucide-react";
+import { User, Mail, Phone, MapPin, CreditCard, Bell, Shield, LogOut, Plus, Edit, Trash2, Loader2, Star, ChevronDown } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase, ShippingAddress } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,93 @@ interface Payment {
   paid_at: string | null;
 }
 
+const countryCodes = [
+  { code: "+90", country: "Türkiye", isoCode: "TR" },
+  { code: "+1", country: "ABD/Kanada", isoCode: "US" },
+  { code: "+44", country: "İngiltere", isoCode: "GB" },
+  { code: "+49", country: "Almanya", isoCode: "DE" },
+  { code: "+33", country: "Fransa", isoCode: "FR" },
+  { code: "+39", country: "İtalya", isoCode: "IT" },
+  { code: "+34", country: "İspanya", isoCode: "ES" },
+  { code: "+31", country: "Hollanda", isoCode: "NL" },
+  { code: "+32", country: "Belçika", isoCode: "BE" },
+  { code: "+41", country: "İsviçre", isoCode: "CH" },
+  { code: "+43", country: "Avusturya", isoCode: "AT" },
+  { code: "+46", country: "İsveç", isoCode: "SE" },
+  { code: "+47", country: "Norveç", isoCode: "NO" },
+  { code: "+45", country: "Danimarka", isoCode: "DK" },
+  { code: "+358", country: "Finlandiya", isoCode: "FI" },
+  { code: "+7", country: "Rusya", isoCode: "RU" },
+  { code: "+86", country: "Çin", isoCode: "CN" },
+  { code: "+81", country: "Japonya", isoCode: "JP" },
+  { code: "+82", country: "Güney Kore", isoCode: "KR" },
+  { code: "+91", country: "Hindistan", isoCode: "IN" },
+  { code: "+971", country: "BAE", isoCode: "AE" },
+  { code: "+966", country: "Suudi Arabistan", isoCode: "SA" },
+  { code: "+20", country: "Mısır", isoCode: "EG" },
+  { code: "+27", country: "Güney Afrika", isoCode: "ZA" },
+  { code: "+61", country: "Avustralya", isoCode: "AU" },
+  { code: "+64", country: "Yeni Zelanda", isoCode: "NZ" },
+  { code: "+55", country: "Brezilya", isoCode: "BR" },
+  { code: "+52", country: "Meksika", isoCode: "MX" },
+  { code: "+54", country: "Arjantin", isoCode: "AR" },
+].sort((a, b) => {
+  // Türkiye'yi en üste al
+  if (a.code === "+90") return -1;
+  if (b.code === "+90") return 1;
+  // Diğerlerini alfabetik sırala
+  return a.country.localeCompare(b.country);
+});
+
+// Bayrak resmi URL'sini oluştur
+const getFlagUrl = (isoCode: string) => {
+  return `https://flagcdn.com/w20/${isoCode.toLowerCase()}.png`;
+};
+
+// Parse phone number from database
+// Supports both formats: "+901234567890" (new) and "+90 123 456 78 90" (old/legacy)
+// Returns: { countryCode: "+90", phoneNumber: "5538064115" }
+const parsePhone = (phone: string) => {
+  if (!phone) return { countryCode: "+90", phoneNumber: "" };
+  
+  // Remove all spaces first
+  const cleanPhone = phone.replace(/\s/g, "");
+  
+  // Bilinen country code'ları kontrol et (uzun olanlardan başla)
+  const countryCodes = [
+    "+358", "+971", "+966", // 3 haneli (önce kontrol et)
+    "+90", "+44", "+49", "+33", "+39", "+34", "+31", "+32", "+41", "+43", "+46", "+47", "+45", "+86", "+81", "+82", "+91", "+20", "+27", "+61", "+64", "+55", "+52", "+54", // 2 haneli
+    "+1", "+7" // 1 haneli (en son kontrol et)
+  ];
+  
+  // Country code'u bul (uzun olanlardan başla)
+  let countryCode = "";
+  for (const code of countryCodes) {
+    if (cleanPhone.startsWith(code)) {
+      countryCode = code;
+      break;
+    }
+  }
+  
+  if (countryCode) {
+    // Country code'dan sonraki kısmı al (sadece rakamlar)
+    const afterCountryCode = cleanPhone.substring(countryCode.length);
+    const phoneNumber = afterCountryCode.replace(/\D/g, "");
+    return { countryCode, phoneNumber };
+  }
+  
+  // Legacy format with spaces: "+90 123 456 78 90"
+  const legacyMatch = phone.match(/^(\+\d+)\s*(.+)$/);
+  if (legacyMatch) {
+    const phoneNum = legacyMatch[2].replace(/\s/g, "");
+    return { countryCode: legacyMatch[1], phoneNumber: phoneNum };
+  }
+  
+  // If no country code found, assume it's just the number (default to Turkey)
+  const phoneNum = cleanPhone.replace(/^\+/, "");
+  return { countryCode: "+90", phoneNumber: phoneNum };
+};
+
 export default function Profile() {
   const { user, profile, loading, signOut, updateProfile, updatePassword } = useAuth();
   const navigate = useNavigate();
@@ -48,6 +136,15 @@ export default function Profile() {
   const [phone, setPhone] = useState("");
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  
+  // Phone number state
+  const { countryCode: initialCountryCode, phoneNumber: initialPhoneNumber } = parsePhone(phone);
+  const [countryCode, setCountryCode] = useState(initialCountryCode);
+  const [phoneNumber, setPhoneNumber] = useState(initialPhoneNumber);
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
+  const isUserTypingPhoneRef = useRef(false);
+  const lastPhoneValueRef = useRef(phone);
   
   // Backup for cancel
   const [originalProfile, setOriginalProfile] = useState({ firstName: "", lastName: "", phone: "" });
@@ -100,10 +197,44 @@ export default function Profile() {
       setEmail(profile.email || "");
       setPhone(phoneNum);
       
+      // Parse phone number for display
+      const parsed = parsePhone(phoneNum);
+      setCountryCode(parsed.countryCode);
+      setPhoneNumber(parsed.phoneNumber);
+      lastPhoneValueRef.current = phoneNum;
+      
       // Backup original values
       setOriginalProfile({ firstName: first, lastName: last, phone: phoneNum });
     }
   }, [profile]);
+
+  // Update local phone state when phone changes externally (not from user typing)
+  useEffect(() => {
+    // Only sync if the change came from outside (not from user typing)
+    if (!isUserTypingPhoneRef.current && phone !== lastPhoneValueRef.current) {
+      const parsed = parsePhone(phone);
+      setCountryCode(parsed.countryCode);
+      setPhoneNumber(parsed.phoneNumber);
+      lastPhoneValueRef.current = phone;
+    }
+  }, [phone]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isCountryDropdownOpen) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.country-selector-container')) {
+          setIsCountryDropdownOpen(false);
+        }
+      }
+    };
+
+    if (isCountryDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isCountryDropdownOpen]);
 
   // Fetch shipping addresses
   useEffect(() => {
@@ -212,9 +343,10 @@ export default function Profile() {
 
     // Phone validation - if phone is provided, it must be valid
     if (phone.trim()) {
-      const phoneNumber = phone.trim().replace(/\s/g, '');
-      if (!/^0[0-9]{10}$/.test(phoneNumber)) {
-        toast.error("Telefon numarası 0 ile başlamalı ve 11 haneli olmalıdır (örn: 05XXXXXXXXX)");
+      // Phone is stored as countryCode + phoneNumber (e.g., +905538064115)
+      // Check if phoneNumber has 10 digits (for Turkish format)
+      if (!phoneNumber || phoneNumber.length !== 10) {
+        toast.error("Lütfen telefon numarasını tam giriniz");
         return;
       }
     }
@@ -228,8 +360,9 @@ export default function Profile() {
     console.log('Starting profile update...');
 
     try {
-      // Clean phone number (remove spaces)
-      const cleanedPhone = phone.trim() ? phone.trim().replace(/\s/g, '') : null;
+      // Phone is already in format: countryCode + phoneNumber (e.g., +905538064115)
+      // No spaces, ready for database
+      const cleanedPhone = phone.trim() || null;
       
       const updateData = {
         first_name: firstName.trim(),
@@ -268,8 +401,72 @@ export default function Profile() {
     setFirstName(originalProfile.firstName);
     setLastName(originalProfile.lastName);
     setPhone(originalProfile.phone);
+    
+    // Restore phone number state
+    const parsed = parsePhone(originalProfile.phone);
+    setCountryCode(parsed.countryCode);
+    setPhoneNumber(parsed.phoneNumber);
+    lastPhoneValueRef.current = originalProfile.phone;
+    
     setIsEditingProfile(false);
   };
+
+  const formatPhoneNumber = (value: string): string => {
+    // Remove all non-digits
+    const digits = value.replace(/\D/g, "");
+    // Format as: 123 456 78 90 (3-3-2-2)
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+    if (digits.length <= 8) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 8)} ${digits.slice(8, 10)}`;
+  };
+
+  const handlePhoneNumberChange = (value: string) => {
+    // Mark that user is typing to prevent useEffect from overwriting
+    isUserTypingPhoneRef.current = true;
+    
+    // Remove all non-digits
+    const digits = value.replace(/\D/g, "");
+    // Limit to 10 digits for Turkish format
+    const limitedDigits = digits.slice(0, 10);
+    setPhoneNumber(limitedDigits);
+    
+    // Update the phone field with country code + number (NO SPACES for database)
+    // Database format: +905538064115
+    // Display format: +90 123 456 78 90 (handled in UI)
+    const fullPhone = countryCode && limitedDigits ? `${countryCode}${limitedDigits}` : "";
+    lastPhoneValueRef.current = fullPhone;
+    setPhone(fullPhone);
+    
+    // Reset typing flag after a short delay to allow for continuous typing
+    setTimeout(() => {
+      isUserTypingPhoneRef.current = false;
+    }, 100);
+  };
+
+  const handleCountryCodeChange = (newCountryCode: string) => {
+    setCountryCode(newCountryCode);
+    setIsCountryDropdownOpen(false);
+    // Update the phone field with new country code + existing number (NO SPACES)
+    // Database format: +905538064115
+    const fullPhone = phoneNumber ? `${newCountryCode}${phoneNumber}` : "";
+    lastPhoneValueRef.current = fullPhone;
+    setPhone(fullPhone);
+  };
+
+  const handlePhoneNumberFocus = () => {
+    setPhoneTouched(true);
+  };
+
+  const handlePhoneNumberBlur = () => {
+    // Eğer input'a bir kez tıklandıysa (touched) ve telefon numarası boşsa veya eksikse hata göster
+    if (phoneTouched && phoneNumber && phoneNumber.length !== 10) {
+      // Phone number is incomplete
+      // We don't show error here as phone is optional in profile
+    }
+  };
+
+  const selectedCountry = countryCodes.find(c => c.code === countryCode) || countryCodes[0];
 
   const handleChangePassword = async () => {
     if (passwordData.new !== passwordData.confirm) {
@@ -618,25 +815,133 @@ Hata: ${error.message || error.code}`;
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="phone">Telefon</Label>
-                  <div className="relative">
-                    <Input 
-                      id="phone" 
-                      type="tel" 
-                      value={phone || ""}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="05XXXXXXXXX"
+                  <div className="relative country-selector-container">
+                    {/* Hidden select for form submission */}
+                    <select
+                      value={countryCode}
+                      onChange={(e) => handleCountryCodeChange(e.target.value)}
+                      className="sr-only"
+                      aria-hidden="true"
+                      tabIndex={-1}
                       disabled={!isEditingProfile}
-                      className={!isEditingProfile ? "bg-muted/50 cursor-not-allowed" : !phone ? "text-transparent" : ""}
-                      maxLength={11}
-                    />
-                    {!phone && isEditingProfile && (
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
-                        05XXXXXXXXX
-                      </span>
-                    )}
+                    >
+                      {countryCodes.map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.country} {country.code}
+                        </option>
+                      ))}
+                    </select>
+                    
+                    {/* Combined Input */}
+                    <div className={cn(
+                      "flex items-center h-10 w-full rounded-md border border-input bg-background",
+                      "focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2",
+                      !isEditingProfile && "bg-muted/50 cursor-not-allowed"
+                    )}>
+                      {/* Country Code Selector */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => isEditingProfile && setIsCountryDropdownOpen(!isCountryDropdownOpen)}
+                          disabled={!isEditingProfile}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 h-10 border-r border-input",
+                            "hover:bg-muted/50 transition-colors",
+                            "focus:outline-none",
+                            !isEditingProfile && "cursor-not-allowed"
+                          )}
+                        >
+                          <img 
+                            src={getFlagUrl(selectedCountry.isoCode)}
+                            alt={selectedCountry.country}
+                            className="w-5 h-4 object-cover rounded-sm"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                          <span className="text-sm font-medium">{selectedCountry.code}</span>
+                          {isEditingProfile && (
+                            <ChevronDown className={cn(
+                              "w-3 h-3 text-muted-foreground transition-transform",
+                              isCountryDropdownOpen && "rotate-180"
+                            )} />
+                          )}
+                        </button>
+                        
+                        {/* Dropdown Menu */}
+                        {isCountryDropdownOpen && isEditingProfile && (
+                          <>
+                            <div 
+                              className="fixed inset-0 z-10" 
+                              onClick={() => setIsCountryDropdownOpen(false)}
+                            />
+                            <div className="absolute top-full left-0 mt-1 z-20 w-[200px] max-h-[300px] overflow-y-auto rounded-md border border-input bg-background shadow-lg">
+                              {countryCodes.map((country) => (
+                                <button
+                                  key={country.code}
+                                  type="button"
+                                  onClick={() => handleCountryCodeChange(country.code)}
+                                  className={cn(
+                                    "w-full flex items-center gap-2 px-3 py-2 text-sm text-left",
+                                    "hover:bg-muted transition-colors",
+                                    country.code === countryCode && "bg-muted font-medium"
+                                  )}
+                                >
+                                  <img 
+                                    src={getFlagUrl(country.isoCode)}
+                                    alt={country.country}
+                                    className="w-5 h-4 object-cover rounded-sm flex-shrink-0"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none';
+                                    }}
+                                  />
+                                  <span className="flex-1">{country.code}</span>
+                                  <span className="text-xs text-muted-foreground">{country.country}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      
+                      {/* Phone Number Input */}
+                      <div className="relative flex-1">
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          id="phone"
+                          type="tel"
+                          inputMode="numeric"
+                          placeholder="123 456 78 90"
+                          value={formatPhoneNumber(phoneNumber)}
+                          onChange={(e) => isEditingProfile && handlePhoneNumberChange(e.target.value)}
+                          onFocus={handlePhoneNumberFocus}
+                          onBlur={handlePhoneNumberBlur}
+                          disabled={!isEditingProfile}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck={false}
+                          data-form-type="other"
+                          data-lpignore="true"
+                          className={cn(
+                            "w-full h-10 pl-10 pr-3 bg-transparent",
+                            "text-sm placeholder:text-muted-foreground",
+                            "focus:outline-none",
+                            "disabled:cursor-not-allowed disabled:opacity-50",
+                            !phoneNumber && isEditingProfile && "text-transparent"
+                          )}
+                          maxLength={14} // "123 456 78 90" = 14 chars
+                        />
+                        {!phoneNumber && isEditingProfile && (
+                          <span className="absolute left-10 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
+                            123 456 78 90
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                   {isEditingProfile && (
-                    <p className="text-xs text-muted-foreground">0 ile başlayan 11 haneli telefon numarası giriniz</p>
+                    <p className="text-xs text-muted-foreground">Ülke kodunu seçin ve 10 haneli telefon numarası giriniz</p>
                   )}
                 </div>
               </div>
