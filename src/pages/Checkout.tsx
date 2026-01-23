@@ -296,7 +296,44 @@ export default function Checkout() {
     setLoading(true);
     
     try {
-      // Telefon kontrolü - PayTR için zorunlu
+      // Profil bilgileri kontrolü - isim, soyisim ve telefon numarası
+      if (!profile) {
+        toast.error("Profil bilgileriniz yüklenemedi. Lütfen tekrar deneyin.");
+        setLoading(false);
+        return;
+      }
+
+      const missingFields: string[] = [];
+      
+      if (!profile.first_name || !profile.first_name.trim()) {
+        missingFields.push("isim");
+      }
+      
+      if (!profile.last_name || !profile.last_name.trim()) {
+        missingFields.push("soyisim");
+      }
+      
+      if (!profile.phone || !profile.phone.trim()) {
+        missingFields.push("telefon numarası");
+      }
+
+      if (missingFields.length > 0) {
+        const missingText = missingFields
+          .map(field => {
+            if (field === "isim") return "İsim";
+            if (field === "soyisim") return "Soyisim";
+            if (field === "telefon numarası") return "Telefon Numarası";
+            return field;
+          })
+          .join(", ");
+        toast.error(`Ödeme yapmak için profil bilgilerinizi tamamlamanız gerekiyor. Eksik: ${missingText}`);
+        setLoading(false);
+        // Profil sayfasına yönlendir, eksik alanları belirt
+        navigate(`/profile?missing=${missingFields.join(",")}`);
+        return;
+      }
+
+      // Telefon kontrolü - PayTR için zorunlu (formData'dan da kontrol et)
       if (!formData.phone || !formData.phone.trim()) {
         toast.error("Telefon numarası gereklidir");
         setLoading(false);
@@ -383,7 +420,11 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       // Kullanıcı bilgilerini hazırla
       const userName = `${formData.firstName} ${formData.lastName}`;
       const userEmail = user?.email || "";
-      const userPhone = formData.phone;
+      // PayTR için profil telefon numarasını kullan
+      const userPhone = profile?.phone?.trim() || formData.phone;
+      if (!userPhone) {
+        throw new Error("Telefon numarası bulunamadı. Lütfen profil bilgilerinizi güncelleyin.");
+      }
       const userAddress = `${formData.addressLine1}${formData.addressLine2 ? `, ${formData.addressLine2}` : ''}, ${formData.district ? `${formData.district}, ` : ''}${formData.city} ${formData.postalCode}`;
 
       // PayTR token oluştur

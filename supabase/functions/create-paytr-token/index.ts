@@ -8,6 +8,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// PayTR API Constants
+const PAYTR_API_URL = "https://www.paytr.com/odeme/api/get-token";
+const PAYTR_TIMEOUT_LIMIT = "30";
+const PAYTR_LANG = "tr";
+const PAYTR_DEBUG_MODE = "0";
+const PAYTR_NO_INSTALLMENT = "1";
+const PAYTR_MAX_INSTALLMENT = "0";
+
 interface PayTRRequest {
   order_id: string;
   order_number: string;
@@ -86,13 +94,11 @@ Deno.serve(async (req) => {
     }
 
     const user_ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "127.0.0.1";
-    const no_installment = "1";
-    const max_installment = "0";
     const test_mode = Deno.env.get("PAYTR_TEST_MODE") || "0";
     const baseUrl = Deno.env.get("SITE_URL") || "https://nfclink.com.tr";
 
     // Hash oluştur
-    const hashStr = `${merchant_id}${user_ip}${order_number}${user_email}${amount}${user_basket}${no_installment}${max_installment}${currency}${test_mode}`;
+    const hashStr = `${merchant_id}${user_ip}${order_number}${user_email}${amount}${user_basket}${PAYTR_NO_INSTALLMENT}${PAYTR_MAX_INSTALLMENT}${currency}${test_mode}`;
     const paytr_token = await createPayTRHash(hashStr + merchant_salt, merchant_key);
 
     // PayTR API isteği
@@ -104,28 +110,34 @@ Deno.serve(async (req) => {
     formData.append("payment_amount", amount.toString());
     formData.append("paytr_token", paytr_token);
     formData.append("user_basket", user_basket);
-    formData.append("debug_on", "0");
-    formData.append("no_installment", no_installment);
-    formData.append("max_installment", max_installment);
+    formData.append("debug_on", PAYTR_DEBUG_MODE);
+    formData.append("no_installment", PAYTR_NO_INSTALLMENT);
+    formData.append("max_installment", PAYTR_MAX_INSTALLMENT);
     formData.append("user_name", user_name);
     formData.append("user_address", user_address);
     formData.append("user_phone", user_phone);
     formData.append("merchant_ok_url", `${baseUrl}/orders?status=success`);
     formData.append("merchant_fail_url", `${baseUrl}/orders?status=failed`);
-    formData.append("timeout_limit", "30");
+    formData.append("timeout_limit", PAYTR_TIMEOUT_LIMIT);
     formData.append("currency", currency);
     formData.append("test_mode", test_mode);
-    formData.append("lang", "tr");
+    formData.append("lang", PAYTR_LANG);
 
-    const paytrResponse = await fetch("https://www.paytr.com/odeme/api/get-token", {
+    const paytrResponse = await fetch(PAYTR_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formData.toString(),
     });
 
+    if (!paytrResponse.ok) {
+      console.error("PayTR API error:", paytrResponse.status, paytrResponse.statusText);
+      throw new Error("PayTR API'ye bağlanılamadı");
+    }
+
     const paytrResult = await paytrResponse.json();
 
     if (paytrResult.status !== "success") {
+      console.error("PayTR token creation failed:", paytrResult.reason);
       throw new Error(paytrResult.reason || "Ödeme token oluşturulamadı");
     }
 
@@ -148,6 +160,7 @@ Deno.serve(async (req) => {
       .single();
 
     if (paymentError) {
+      console.error("Payment record creation error:", paymentError);
       throw new Error("Ödeme kaydı oluşturulamadı");
     }
 
@@ -156,9 +169,13 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: any) {
+    console.error("create-paytr-token error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ success: false, error: error.message || "Bilinmeyen hata" }),
+      { 
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500
+      }
     );
   }
 });

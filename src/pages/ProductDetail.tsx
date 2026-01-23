@@ -661,9 +661,6 @@ export default function ProductDetail() {
     let validationResult: { isValid: boolean; errors: Record<string, string> } | null = null;
     let customizationData: any = null;
 
-    console.log("handleFormSubmit - businessCardData.phone:", businessCardData.phone);
-    console.log("handleFormSubmit - petIdData.ownerPhone:", petIdData.ownerPhone);
-
     if (nfcType === "business-card") {
       validationResult = validateBusinessCardForm();
       if (validationResult.isValid) customizationData = { type: "business-card", ...businessCardData };

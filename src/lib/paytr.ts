@@ -23,23 +23,20 @@ export interface PayTRTokenResponse {
 
 export async function createPayTRToken(request: PayTRTokenRequest): Promise<PayTRTokenResponse> {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
+    // Session kontrolü ve refresh
+    let session = (await supabase.auth.getSession()).data.session;
     
     if (!session?.access_token) {
       const { data: { session: refreshedSession } } = await supabase.auth.refreshSession();
       if (!refreshedSession?.access_token) {
         return { success: false, error: "Oturum süresi dolmuş. Lütfen tekrar giriş yapın." };
       }
-    }
-
-    const currentSession = session || (await supabase.auth.getSession()).data.session;
-    if (!currentSession?.access_token) {
-      return { success: false, error: "Oturum bulunamadı. Lütfen giriş yapın." };
+      session = refreshedSession;
     }
 
     const { data, error } = await supabase.functions.invoke("create-paytr-token", {
       body: request,
-      headers: { Authorization: `Bearer ${currentSession.access_token}` },
+      headers: { Authorization: `Bearer ${session.access_token}` },
     });
 
     if (error) {
@@ -59,6 +56,7 @@ export async function createPayTRToken(request: PayTRTokenRequest): Promise<PayT
 
     return data;
   } catch (error: any) {
+    console.error("PayTR token creation error:", error);
     return { success: false, error: error.message || "Ödeme başlatılırken hata oluştu" };
   }
 }

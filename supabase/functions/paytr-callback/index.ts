@@ -4,6 +4,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
 async function createPayTRHash(data: string, key: string): Promise<string> {
   const encoder = new TextEncoder();
   const cryptoKey = await crypto.subtle.importKey(
@@ -24,7 +29,7 @@ async function createPayTRHash(data: string, key: string): Promise<string> {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok");
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
@@ -43,6 +48,7 @@ Deno.serve(async (req) => {
     const merchant_salt = Deno.env.get("PAYTR_MERCHANT_SALT") ?? "";
 
     if (!merchant_key || !merchant_salt) {
+      console.error("PayTR callback: Missing merchant credentials");
       throw new Error("Config error");
     }
 
@@ -51,6 +57,7 @@ Deno.serve(async (req) => {
     const calculatedHash = await createPayTRHash(hashStr, merchant_key);
 
     if (calculatedHash !== hash) {
+      console.error("PayTR callback: Hash mismatch", { merchant_oid, status });
       throw new Error("Hash mismatch");
     }
 
@@ -67,13 +74,14 @@ Deno.serve(async (req) => {
       .single();
 
     if (paymentError || !payment) {
+      console.error("PayTR callback: Payment not found", { merchant_oid, error: paymentError });
       throw new Error("Payment not found");
     }
 
     const isSuccess = status === "success";
 
     // Payment güncelle
-    await supabaseAdmin
+    const { error: updatePaymentError } = await supabaseAdmin
       .from("payments")
       .update({
         status: isSuccess ? "succeeded" : "failed",
@@ -83,9 +91,14 @@ Deno.serve(async (req) => {
       })
       .eq("id", payment.id);
 
+    if (updatePaymentError) {
+      console.error("PayTR callback: Payment update error", { paymentId: payment.id, error: updatePaymentError });
+      throw new Error("Payment update failed");
+    }
+
     // Order güncelle
     if (payment.order_id) {
-      await supabaseAdmin
+      const { error: updateOrderError } = await supabaseAdmin
         .from("orders")
         .update({
           status: isSuccess ? "confirmed" : "cancelled",
@@ -93,10 +106,25 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         })
         .eq("id", payment.order_id);
+
+      if (updateOrderError) {
+        console.error("PayTR callback: Order update error", { orderId: payment.order_id, error: updateOrderError });
+        // Order update hatası kritik değil, logla ama devam et
+      }
     }
 
-    return new Response("OK", { status: 200 });
+    console.log("PayTR callback: Success", { merchant_oid, status, paymentId: payment.id });
+    return new Response("OK", { 
+      status: 200,
+      headers: corsHeaders
+    });
   } catch (error: any) {
-    return new Response("OK", { status: 200 });
+    console.error("PayTR callback error:", error);
+    // PayTR'e her zaman OK dönmek gerekiyor (retry önlemek için)
+    // Ama hataları logluyoruz
+    return new Response("OK", { 
+      status: 200,
+      headers: corsHeaders
+    });
   }
 });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { User, Mail, Phone, MapPin, CreditCard, Bell, Shield, LogOut, Plus, Edit, Trash2, Loader2, Star, ChevronDown } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -128,6 +128,7 @@ const parsePhone = (phone: string) => {
 export default function Profile() {
   const { user, profile, loading, signOut, updateProfile, updatePassword } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Profile data
   const [firstName, setFirstName] = useState("");
@@ -184,6 +185,32 @@ export default function Profile() {
       navigate("/login");
     }
   }, [user, loading, navigate]);
+
+  // Check for missing fields from URL parameter (from checkout redirect)
+  useEffect(() => {
+    const missingParam = searchParams.get("missing");
+    if (missingParam) {
+      const missingFields = missingParam.split(",");
+      const missingText = missingFields
+        .map(field => {
+          if (field === "isim") return "İsim";
+          if (field === "soyisim") return "Soyisim";
+          if (field === "telefon numarası") return "Telefon Numarası";
+          return field;
+        })
+        .join(", ");
+      
+      toast.info(`Ödeme yapmak için eksik bilgilerinizi tamamlamanız gerekiyor: ${missingText}`, {
+        duration: 5000,
+      });
+      
+      // Otomatik olarak düzenleme modunu aç
+      setIsEditingProfile(true);
+      
+      // URL'den parametreyi temizle (tekrar gösterilmemesi için)
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   // Load profile data
   useEffect(() => {
@@ -384,6 +411,18 @@ export default function Profile() {
         phone: phone.trim() 
       });
       setIsEditingProfile(false);
+      
+      // Check if user came from checkout (missing parameter was present)
+      const cameFromCheckout = searchParams.get("missing") !== null;
+      if (cameFromCheckout) {
+        // Clear the missing parameter
+        setSearchParams({}, { replace: true });
+        // Navigate back to checkout after a short delay
+        setTimeout(() => {
+          toast.success("Profil bilgileriniz güncellendi. Ödeme sayfasına yönlendiriliyorsunuz...");
+          navigate("/checkout");
+        }, 1000);
+      }
       
       // toast.success is already shown in updateProfile
     } catch (error: any) {
