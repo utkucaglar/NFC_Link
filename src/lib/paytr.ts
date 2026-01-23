@@ -55,9 +55,12 @@ export async function createPayTRToken(
     }
 
     // Supabase'in functions.invoke() metodunu kullan
-    // Session otomatik olarak header'a eklenir
+    // Manuel olarak Authorization header'ı ekliyoruz (session token ile)
     const { data, error } = await supabase.functions.invoke("create-paytr-token", {
       body: request,
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
     });
 
     if (error) {
