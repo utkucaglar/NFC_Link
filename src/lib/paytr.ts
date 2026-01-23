@@ -28,58 +28,38 @@ export async function createPayTRToken(
   request: PayTRTokenRequest
 ): Promise<PayTRTokenResponse> {
   try {
-    // Session'ı al ve refresh et
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    
-    if (sessionError || !session) {
-      throw new Error("Oturum bulunamadı. Lütfen giriş yapın.");
-    }
+    // Supabase'in functions.invoke() metodunu kullan
+    // Bu metod otomatik olarak session yönetimi yapar ve doğru header'ları ekler
+    const { data, error } = await supabase.functions.invoke("create-paytr-token", {
+      body: request,
+    });
 
-    // Supabase anon key'i al
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!anonKey) {
-      throw new Error("Supabase anon key yapılandırılmamış");
-    }
-
-    const response = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-paytr-token`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`,
-          "apikey": anonKey,
-        },
-        body: JSON.stringify(request),
+    if (error) {
+      // Supabase'in döndürdüğü hata mesajını kontrol et
+      if (error.message?.includes("401") || error.message?.includes("Unauthorized")) {
+        throw new Error("Oturum süresi dolmuş. Lütfen tekrar giriş yapın.");
       }
-    );
-
-    // Response status kontrolü
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = "PayTR token oluşturulamadı";
-      
-      if (response.status === 401) {
-        errorMessage = "Oturum süresi dolmuş. Lütfen tekrar giriş yapın.";
-      } else if (response.status === 403) {
-        errorMessage = "Bu işlem için yetkiniz yok.";
-      }
-      
-      throw new Error(errorMessage);
+      throw new Error(error.message || "PayTR token oluşturulamadı");
     }
 
-    const result = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error || "PayTR token oluşturulamadı");
+    if (!data || !data.success) {
+      throw new Error(data?.error || "PayTR token oluşturulamadı");
     }
 
-    return result;
+    return data;
   } catch (error: any) {
     console.error("PayTR token error:", error);
+    
+    // Hata mesajını kontrol et ve kullanıcı dostu mesaj döndür
+    let errorMessage = error.message || "PayTR token oluşturulurken bir hata oluştu";
+    
+    if (errorMessage.includes("401") || errorMessage.includes("Unauthorized") || errorMessage.includes("Oturum")) {
+      errorMessage = "Oturum süresi dolmuş. Lütfen tekrar giriş yapın.";
+    }
+    
     return {
       success: false,
-      error: error.message || "PayTR token oluşturulurken bir hata oluştu",
+      error: errorMessage,
     };
   }
 }
