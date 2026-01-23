@@ -28,10 +28,17 @@ export async function createPayTRToken(
   request: PayTRTokenRequest
 ): Promise<PayTRTokenResponse> {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
+    // Session'ı al ve refresh et
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
-    if (!session) {
+    if (sessionError || !session) {
       throw new Error("Oturum bulunamadı. Lütfen giriş yapın.");
+    }
+
+    // Supabase anon key'i al
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (!anonKey) {
+      throw new Error("Supabase anon key yapılandırılmamış");
     }
 
     const response = await fetch(
@@ -40,11 +47,26 @@ export async function createPayTRToken(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          "Authorization": `Bearer ${session.access_token}`,
+          "apikey": anonKey,
         },
         body: JSON.stringify(request),
       }
     );
+
+    // Response status kontrolü
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = "PayTR token oluşturulamadı";
+      
+      if (response.status === 401) {
+        errorMessage = "Oturum süresi dolmuş. Lütfen tekrar giriş yapın.";
+      } else if (response.status === 403) {
+        errorMessage = "Bu işlem için yetkiniz yok.";
+      }
+      
+      throw new Error(errorMessage);
+    }
 
     const result = await response.json();
 
