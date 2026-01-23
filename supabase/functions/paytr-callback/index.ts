@@ -340,9 +340,9 @@ Deno.serve(async (req) => {
         console.log("PayTR callback: Checking invoice_sent", { invoice_sent: order.invoice_sent, order_id: order.id });
         
         if (!order.invoice_sent) {
-          // Kullanıcı bilgilerini al
+          // Kullanıcı bilgilerini al - user_profiles tablosundan
           const { data: profile, error: profileError } = await supabaseAdmin
-            .from("profiles")
+            .from("user_profiles")
             .select("first_name, last_name, email")
             .eq("id", order.user_id)
             .single();
@@ -357,14 +357,35 @@ Deno.serve(async (req) => {
             const customerName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Değerli Müşterimiz';
             
             // Shipping address'i parse et
-            const shippingAddress = order.shipping_address || {};
-            const addressStr = [
-              shippingAddress.address_line1,
-              shippingAddress.address_line2,
-              shippingAddress.district,
-              shippingAddress.city,
-              shippingAddress.postal_code
-            ].filter(Boolean).join(', ');
+            let addressStr = 'Adres bilgisi mevcut değil';
+            try {
+              if (order.shipping_address) {
+                if (typeof order.shipping_address === 'string') {
+                  // JSON string ise parse et
+                  const parsedAddress = JSON.parse(order.shipping_address);
+                  addressStr = [
+                    parsedAddress.address_line1,
+                    parsedAddress.address_line2,
+                    parsedAddress.district,
+                    parsedAddress.city,
+                    parsedAddress.postal_code
+                  ].filter(Boolean).join(', ') || order.shipping_address;
+                } else if (typeof order.shipping_address === 'object') {
+                  // Zaten obje ise
+                  addressStr = [
+                    order.shipping_address.address_line1,
+                    order.shipping_address.address_line2,
+                    order.shipping_address.district,
+                    order.shipping_address.city,
+                    order.shipping_address.postal_code
+                  ].filter(Boolean).join(', ');
+                }
+              }
+            } catch (e) {
+              // Parse edilemezse direkt string olarak kullan
+              addressStr = order.shipping_address || 'Adres bilgisi mevcut değil';
+            }
+            console.log("PayTR callback: Address parsed", { addressStr });
 
             // Order items'ı order_items tablosundan çek
             let orderItems: Array<{ name: string; quantity: number; price: number }> = [];
@@ -400,7 +421,7 @@ Deno.serve(async (req) => {
               customerName,
               orderItems,
               order.total,
-              addressStr || 'Adres bilgisi mevcut değil'
+              addressStr
             );
 
             console.log("PayTR callback: Email send result", { emailSent, email: profile.email });
