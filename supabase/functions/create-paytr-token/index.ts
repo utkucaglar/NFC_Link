@@ -96,9 +96,21 @@ Deno.serve(async (req) => {
       currency = "TL",
     } = body;
 
-    // Validasyon
-    if (!order_id || !order_number || !amount || !user_name || !user_email || !user_phone || !user_address || !user_basket) {
-      throw new Error("Missing required fields");
+    // Validasyon - hangi alan eksik detaylı log
+    const missingFields = [];
+    if (!order_id) missingFields.push("order_id");
+    if (!order_number) missingFields.push("order_number");
+    if (!amount) missingFields.push("amount");
+    if (!user_name) missingFields.push("user_name");
+    if (!user_email) missingFields.push("user_email");
+    if (!user_phone) missingFields.push("user_phone");
+    if (!user_address) missingFields.push("user_address");
+    if (!user_basket) missingFields.push("user_basket");
+    
+    if (missingFields.length > 0) {
+      console.error("Missing fields:", missingFields);
+      console.error("Received body:", JSON.stringify(body));
+      throw new Error(`Missing required fields: ${missingFields.join(", ")}`);
     }
 
     // PayTR API bilgileri
