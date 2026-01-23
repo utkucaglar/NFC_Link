@@ -337,13 +337,21 @@ Deno.serve(async (req) => {
         }
 
         // Fatura emaili henüz gönderilmemiş mi kontrol et
+        console.log("PayTR callback: Checking invoice_sent", { invoice_sent: order.invoice_sent, order_id: order.id });
+        
         if (!order.invoice_sent) {
           // Kullanıcı bilgilerini al
-          const { data: profile } = await supabaseAdmin
+          const { data: profile, error: profileError } = await supabaseAdmin
             .from("profiles")
             .select("first_name, last_name, email")
             .eq("id", order.user_id)
             .single();
+
+          if (profileError) {
+            console.error("PayTR callback: Profile fetch error", profileError);
+          }
+
+          console.log("PayTR callback: Profile fetched", { email: profile?.email, user_id: order.user_id });
 
           if (profile && profile.email) {
             const customerName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Değerli Müşterimiz';
@@ -383,6 +391,8 @@ Deno.serve(async (req) => {
             }
 
             // Email gönder
+            console.log("PayTR callback: Sending invoice email to", profile.email);
+            
             const emailSent = await sendInvoiceEmail(
               supabaseAdmin,
               profile.email,
@@ -393,14 +403,21 @@ Deno.serve(async (req) => {
               addressStr || 'Adres bilgisi mevcut değil'
             );
 
+            console.log("PayTR callback: Email send result", { emailSent, email: profile.email });
+
             if (emailSent) {
               // invoice_sent flag'ini güncelle
               await supabaseAdmin
                 .from("orders")
                 .update({ invoice_sent: true })
                 .eq("id", payment.order_id);
+              console.log("PayTR callback: invoice_sent flag updated");
             }
+          } else {
+            console.log("PayTR callback: No profile or email found for user", order.user_id);
           }
+        } else {
+          console.log("PayTR callback: Invoice already sent, skipping email");
         }
       }
     } else if (payment.order_id && !isSuccess) {
