@@ -226,8 +226,8 @@ export default function RenewSubscription() {
       const userEmail = user.email || "";
       const userAddress = profile?.address || "Türkiye";
 
-      // Sipariş numarası oluştur
-      const orderNumber = `RENEW-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+      // Sipariş numarası oluştur (PayTR sadece alfanumerik kabul eder)
+      const orderNumber = `RENEW${new Date().getFullYear()}${Date.now().toString().slice(-8)}`;
 
       // Siparişi veritabanına kaydet (subscription renewal için)
       const { data: orderData, error: orderError } = await supabase
@@ -256,10 +256,6 @@ export default function RenewSubscription() {
       }];
       const userBasket = encodeBasket(basketItems);
 
-      // PayTR iframe'i göster (token oluşturmadan önce)
-      setShowPayTRIframe(true);
-      setProcessing(false);
-
       // PayTR token oluştur
       const tokenResult = await createPayTRToken({
         order_id: orderData.id,
@@ -273,39 +269,28 @@ export default function RenewSubscription() {
         currency: "TL",
       });
 
+      if (!tokenResult.success || !tokenResult.token) {
+        throw new Error(tokenResult.error || "Ödeme başlatılamadı");
+      }
+
       if (tokenResult.payment_id) {
         setPaymentId(tokenResult.payment_id);
       }
 
-      // Token başarılıysa iframe'i yükle
-      if (tokenResult.success && tokenResult.token) {
-        try {
-          await loadPayTRIframe(tokenResult.token);
-        } catch (iframeError) {
-          console.error("Iframe load error:", iframeError);
-          // Iframe yüklenemese bile container gösteriliyor
-        }
-      } else {
-        // Token oluşturulamadı ama ödeme sayfasını göster
-        console.error("PayTR token error:", tokenResult.error);
-        // Kullanıcıya bilgi ver ama hata mesajı gösterme
-        const container = document.getElementById("paytr-iframe-container");
-        if (container) {
-          container.innerHTML = `
-            <div class="flex flex-col items-center justify-center p-8 text-center min-h-[400px]">
-              <div class="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
-              <p class="text-lg font-medium mb-2">Ödeme sayfası hazırlanıyor...</p>
-              <p class="text-sm text-muted-foreground">Lütfen bekleyin, ödeme ekranı açılacaktır.</p>
-            </div>
-          `;
-        }
-      }
+      // PayTR iframe'i göster
+      setShowPayTRIframe(true);
+      setProcessing(false);
 
-      // Ödeme durumunu kontrol et (polling) - sadece payment_id varsa
-      if (tokenResult.payment_id) {
-        const checkInterval = setInterval(async () => {
-          try {
-            const status = await checkPaymentStatus(tokenResult.payment_id!);
+      // DOM güncellemesini bekle, sonra iframe'i yükle
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await loadPayTRIframe(tokenResult.token);
+
+      // Ödeme durumunu kontrol et (polling)
+      const currentPaymentId = tokenResult.payment_id;
+      const checkInterval = setInterval(async () => {
+        try {
+          if (currentPaymentId) {
+            const status = await checkPaymentStatus(currentPaymentId);
             if (status.status === "succeeded") {
               clearInterval(checkInterval);
               await handlePaymentSuccess(orderData.id, orderNumber, plan);
@@ -314,52 +299,21 @@ export default function RenewSubscription() {
               toast.error("Ödeme başarısız oldu");
               setShowPayTRIframe(false);
             }
-          } catch (error) {
-            console.error("Payment status check error:", error);
           }
-        }, 2000); // Her 2 saniyede bir kontrol et
+        } catch (error) {
+          console.error("Payment status check error:", error);
+        }
+      }, 2000);
 
-        // 5 dakika sonra polling'i durdur
-        setTimeout(() => {
-          clearInterval(checkInterval);
-        }, 5 * 60 * 1000);
-      } else if (tokenResult.success && tokenResult.token) {
-        // Token var ama payment_id yok - order_id'ye göre kontrol et
-        const checkInterval = setInterval(async () => {
-          try {
-            // Order durumunu kontrol et
-            const { data: order, error: orderError } = await supabase
-              .from("orders")
-              .select("status")
-              .eq("id", orderData.id)
-              .single();
-
-            if (!orderError && order) {
-              if (order.status === "confirmed") {
-                clearInterval(checkInterval);
-                await handlePaymentSuccess(orderData.id, orderNumber, plan);
-              } else if (order.status === "cancelled") {
-                clearInterval(checkInterval);
-                toast.error("Ödeme başarısız oldu");
-                setShowPayTRIframe(false);
-              }
-            }
-          } catch (error) {
-            console.error("Order status check error:", error);
-          }
-        }, 2000);
-
-        setTimeout(() => {
-          clearInterval(checkInterval);
-        }, 5 * 60 * 1000);
-      }
+      // 5 dakika sonra polling'i durdur
+      setTimeout(() => {
+        clearInterval(checkInterval);
+      }, 5 * 60 * 1000);
 
     } catch (error: any) {
       console.error('Payment error:', error);
-      // Hata durumunda bile ödeme sayfasını göster
-      setShowPayTRIframe(true);
+      toast.error(error.message || "Ödeme başlatılırken hata oluştu");
       setProcessing(false);
-      // Hata mesajı gösterme, sadece ödeme sayfasını göster
     }
   };
 
