@@ -109,6 +109,9 @@ export default function Checkout() {
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
 
+  // Terms acceptance
+  const [termsAccepted, setTermsAccepted] = useState(false);
+
   // Load saved addresses
   useEffect(() => {
     if (user) {
@@ -293,6 +296,12 @@ export default function Checkout() {
   };
 
   const handlePayment = async () => {
+    // Sözleşme onayı kontrolü
+    if (!termsAccepted) {
+      toast.error("Ödeme yapmak için sözleşmeleri onaylamanız gerekmektedir.");
+      return;
+    }
+
     setLoading(true);
     
     try {
@@ -1104,7 +1113,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     </h2>
 
                     {/* PayTR Payment Info */}
-                    <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-6">
+                    <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-4">
                       <div className="flex items-start gap-3">
                         <Shield className="w-5 h-5 text-primary mt-0.5" />
                         <div>
@@ -1112,6 +1121,20 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                           <p className="text-xs text-muted-foreground mt-1">
                             Kredi kartı bilgileriniz PayTR tarafından 256-bit SSL şifreleme ile korunmaktadır. 
                             Kart bilgileriniz sunucularımızda saklanmaz. Ödeme işlemi PayTR güvenli altyapısı üzerinden gerçekleşir.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Fatura Bilgisi */}
+                    <div className="bg-accent/10 border border-accent/30 rounded-xl p-4 mb-6">
+                      <div className="flex items-start gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-accent mt-0.5" />
+                        <div>
+                          <p className="font-medium text-sm text-accent">Otomatik Fatura</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Ödeme tamamlandığında faturanız otomatik olarak e-posta adresinize gönderilecektir. 
+                            Fatura, sipariş detaylarınızı ve satıcı bilgilerini içermektedir.
                           </p>
                         </div>
                       </div>
@@ -1167,34 +1190,55 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     )}
 
                     {!showPayTRIframe && (
-                      <Button 
-                        variant="hero" 
-                        className="w-full mt-6" 
-                        size="lg"
-                        onClick={handlePayment}
-                        disabled={loading}
-                      >
-                        {loading ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            İşleniyor...
-                          </>
-                        ) : (
-                          <>
-                            <Shield className="w-4 h-4" />
-                            ₺{total} Öde
-                          </>
-                        )}
-                      </Button>
-                    )}
+                      <>
+                        {/* Terms Checkbox */}
+                        <div className="flex items-start gap-3 mt-6 p-4 bg-muted/30 rounded-lg border border-border">
+                          <input
+                            type="checkbox"
+                            id="terms-checkbox"
+                            checked={termsAccepted}
+                            onChange={(e) => setTermsAccepted(e.target.checked)}
+                            className="mt-1 w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <label htmlFor="terms-checkbox" className="text-sm text-muted-foreground cursor-pointer select-none">
+                            <Link to="/pre-information-form" target="_blank" className="text-primary hover:underline font-medium">
+                              Ön Bilgilendirme Koşulları
+                            </Link>
+                            'nı ve{" "}
+                            <Link to="/distance-sales-agreement" target="_blank" className="text-primary hover:underline font-medium">
+                              Mesafeli Satış Sözleşmesi
+                            </Link>
+                            'ni okudum, onaylıyorum.
+                          </label>
+                        </div>
 
-                    <p className="text-xs text-muted-foreground text-center mt-4">
-                      "Öde" butonuna tıklayarak{" "}
-                      <Link to="/terms" className="text-primary hover:underline">Kullanım Şartları</Link>
-                      {" "}ve{" "}
-                      <Link to="/privacy" className="text-primary hover:underline">Gizlilik Politikası</Link>
-                      'nı kabul etmiş olursunuz.
-                    </p>
+                        <Button 
+                          variant="hero" 
+                          className="w-full mt-4" 
+                          size="lg"
+                          onClick={handlePayment}
+                          disabled={loading || !termsAccepted}
+                        >
+                          {loading ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              İşleniyor...
+                            </>
+                          ) : (
+                            <>
+                              <Shield className="w-4 h-4" />
+                              ₺{total} Öde
+                            </>
+                          )}
+                        </Button>
+
+                        {!termsAccepted && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 text-center mt-2">
+                            Ödeme yapmak için sözleşmeleri onaylamanız gerekmektedir.
+                          </p>
+                        )}
+                      </>
+                    )}
                   </div>
                 </motion.div>
               )}

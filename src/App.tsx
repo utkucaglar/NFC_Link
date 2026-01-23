@@ -28,6 +28,8 @@ import Contact from "./pages/Contact";
 import PrivacyPolicy from "./pages/legal/PrivacyPolicy";
 import TermsOfService from "./pages/legal/TermsOfService";
 import RefundPolicy from "./pages/legal/RefundPolicy";
+import PreInformationForm from "./pages/legal/PreInformationForm";
+import DistanceSalesAgreement from "./pages/legal/DistanceSalesAgreement";
 // Admin Pages
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminOrders from "./pages/admin/Orders";
@@ -60,6 +62,8 @@ const App = () => (
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
             <Route path="/terms-of-service" element={<TermsOfService />} />
             <Route path="/refund-policy" element={<RefundPolicy />} />
+            <Route path="/pre-information-form" element={<PreInformationForm />} />
+            <Route path="/distance-sales-agreement" element={<DistanceSalesAgreement />} />
             {/* Protected Routes - Temporarily without ProtectedRoute wrapper */}
             <Route path="/my-nfc" element={<MyNFC />} />
             <Route path="/orders" element={<Orders />} />
