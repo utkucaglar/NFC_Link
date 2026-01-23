@@ -28,18 +28,50 @@ export async function createPayTRToken(
   request: PayTRTokenRequest
 ): Promise<PayTRTokenResponse> {
   try {
+    // Önce session'ı kontrol et ve gerekirse refresh et
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      throw new Error("Oturum bulunamadı. Lütfen giriş yapın.");
+    }
+
+    // Session'ı al
+    let { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    // Eğer session yoksa veya geçersizse, refresh etmeyi dene
+    if (sessionError || !session) {
+      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+      
+      if (refreshError || !refreshedSession) {
+        throw new Error("Oturum süresi dolmuş. Lütfen tekrar giriş yapın.");
+      }
+      
+      session = refreshedSession;
+    }
+
+    // Session'ın access_token'ı kontrol et
+    if (!session?.access_token) {
+      throw new Error("Oturum token'ı bulunamadı. Lütfen tekrar giriş yapın.");
+    }
+
     // Supabase'in functions.invoke() metodunu kullan
-    // Bu metod otomatik olarak session yönetimi yapar ve doğru header'ları ekler
+    // Session otomatik olarak header'a eklenir
     const { data, error } = await supabase.functions.invoke("create-paytr-token", {
       body: request,
     });
 
     if (error) {
       // Supabase'in döndürdüğü hata mesajını kontrol et
-      if (error.message?.includes("401") || error.message?.includes("Unauthorized")) {
+      const errorMsg = error.message || "";
+      
+      if (errorMsg.includes("401") || 
+          errorMsg.includes("Unauthorized") || 
+          errorMsg.includes("non-2xx") ||
+          errorMsg.includes("Edge Function returned")) {
         throw new Error("Oturum süresi dolmuş. Lütfen tekrar giriş yapın.");
       }
-      throw new Error(error.message || "PayTR token oluşturulamadı");
+      
+      throw new Error(errorMsg || "PayTR token oluşturulamadı");
     }
 
     if (!data || !data.success) {
@@ -53,7 +85,11 @@ export async function createPayTRToken(
     // Hata mesajını kontrol et ve kullanıcı dostu mesaj döndür
     let errorMessage = error.message || "PayTR token oluşturulurken bir hata oluştu";
     
-    if (errorMessage.includes("401") || errorMessage.includes("Unauthorized") || errorMessage.includes("Oturum")) {
+    if (errorMessage.includes("401") || 
+        errorMessage.includes("Unauthorized") || 
+        errorMessage.includes("non-2xx") ||
+        errorMessage.includes("Edge Function returned") ||
+        errorMessage.includes("Oturum")) {
       errorMessage = "Oturum süresi dolmuş. Lütfen tekrar giriş yapın.";
     }
     
