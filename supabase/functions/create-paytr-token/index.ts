@@ -199,8 +199,16 @@ Deno.serve(async (req) => {
       throw new Error(paytrResult.reason || "PayTR token oluşturulamadı");
     }
 
-    // Payment kaydı oluştur
-    const { data: paymentData, error: paymentError } = await supabaseClient
+    // Payment kaydı oluştur - Service role key ile (RLS bypass)
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!serviceRoleKey) {
+      console.error("SUPABASE_SERVICE_ROLE_KEY missing");
+      throw new Error("Server configuration error");
+    }
+
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+
+    const { data: paymentData, error: paymentError } = await supabaseAdmin
       .from("payments")
       .insert({
         user_id: user.id,
@@ -219,8 +227,8 @@ Deno.serve(async (req) => {
       .single();
 
     if (paymentError) {
-      console.error("Payment insert error:", paymentError);
-      throw new Error("Ödeme kaydı oluşturulamadı");
+      console.error("Payment insert error:", JSON.stringify(paymentError));
+      throw new Error(`Ödeme kaydı oluşturulamadı: ${paymentError.message || paymentError.code || JSON.stringify(paymentError)}`);
     }
 
     return new Response(
