@@ -253,7 +253,6 @@ export default function RenewSubscription() {
         user_address: userAddress,
         user_basket: userBasket,
         currency: "TL",
-        test_mode: import.meta.env.VITE_PAYTR_TEST_MODE === "true",
       });
 
       if (tokenResult.payment_id) {

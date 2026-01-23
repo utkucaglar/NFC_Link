@@ -383,16 +383,18 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         user_address: userAddress,
         user_basket: userBasket,
         currency: "TL",
-        test_mode: import.meta.env.VITE_PAYTR_TEST_MODE === "true",
       });
 
       if (!tokenResult.success || !tokenResult.token) {
         throw new Error(tokenResult.error || "PayTR token oluşturulamadı");
       }
 
-      if (tokenResult.payment_id) {
-        setPaymentId(tokenResult.payment_id);
+      if (!tokenResult.payment_id) {
+        throw new Error("Payment ID alınamadı");
       }
+
+      const currentPaymentId = tokenResult.payment_id;
+      setPaymentId(currentPaymentId);
 
       // PayTR iframe'i göster
       setShowPayTRIframe(true);
@@ -402,11 +404,10 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       await loadPayTRIframe(tokenResult.token);
 
       // Ödeme durumunu kontrol et (polling)
+      // paymentId state'ine güvenmek yerine doğrudan tokenResult.payment_id kullan
       const checkInterval = setInterval(async () => {
-        if (!paymentId) return;
-        
         try {
-          const status = await checkPaymentStatus(paymentId);
+          const status = await checkPaymentStatus(currentPaymentId);
           if (status.status === "succeeded") {
             clearInterval(checkInterval);
             await handlePaymentSuccess(orderData.id, orderNumber, total);

@@ -21,7 +21,6 @@ interface PayTRRequest {
   user_address: string;
   user_basket: string; // Base64 encoded basket items
   currency?: string;
-  test_mode?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -69,7 +68,6 @@ Deno.serve(async (req) => {
       user_address,
       user_basket,
       currency = "TL",
-      test_mode = false,
     } = body;
 
     // Validasyon
@@ -96,7 +94,7 @@ Deno.serve(async (req) => {
     const installment_count = 0; // Taksit yok
     const no_installment = 1; // Taksit yok
     const max_installment = 0;
-    const test_mode_value = test_mode ? 1 : 0;
+    const test_mode_value = 0; // Production mode - test mode kapalı
     const lang = "tr";
 
     // Hash oluştur (PayTR dokümantasyonuna göre)
@@ -162,7 +160,6 @@ Deno.serve(async (req) => {
           user_email,
           user_phone,
           user_address,
-          test_mode: test_mode_value === 1,
         },
       })
       .select()

@@ -27,7 +27,6 @@ Deno.serve(async (req) => {
     const hash = formData.get("hash") as string;
     const failed_reason_code = formData.get("failed_reason_code") as string;
     const failed_reason_msg = formData.get("failed_reason_msg") as string;
-    const test_mode = formData.get("test_mode") as string;
     const payment_type = formData.get("payment_type") as string;
     const currency = formData.get("currency") as string;
     const payment_amount = formData.get("payment_amount") as string;
