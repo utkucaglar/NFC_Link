@@ -230,6 +230,52 @@ export const EMAIL_TEMPLATES = {
     `)
   }),
 
+  // Abonelik Yenileme (Kullanıcıya)
+  SUBSCRIPTION_RENEWED: (nfcName: string, planName: string, newEndDate: string): EmailTemplate => ({
+    subject: `Aboneliğiniz Yenilendi - ${nfcName}`,
+    html: baseTemplate(`
+      <h2>Aboneliğiniz Başarıyla Yenilendi! 🎉</h2>
+      <p>Merhaba,</p>
+      <p><strong>${nfcName}</strong> isimli NFC'nizin aboneliği başarıyla yenilendi.</p>
+      
+      <div class="info-box">
+        <h3 style="margin-top: 0;">Abonelik Detayları</h3>
+        <p><strong>NFC:</strong> ${nfcName}</p>
+        <p><strong>Plan:</strong> ${planName}</p>
+        <p><strong>Yeni Bitiş Tarihi:</strong> <span class="highlight">${newEndDate}</span></p>
+      </div>
+
+      <p>NFC'lerinizi yönetmek için:</p>
+      <a href="https://esdodesign.com/my-nfc" class="button">NFC'lerimi Görüntüle</a>
+      
+      <p>Teşekkür ederiz,<br><strong>Esdodesign Ekibi</strong></p>
+    `)
+  }),
+
+  // Abonelik Yenileme (Admin'e Bildirim)
+  SUBSCRIPTION_RENEWED_ADMIN: (nfcName: string, planName: string, planMonths: number, amount: number, customerName: string, customerEmail: string, newEndDate: string): EmailTemplate => ({
+    subject: `Abonelik Yenilendi - ${nfcName}`,
+    html: baseTemplate(`
+      <h2>Abonelik Yenileme Bildirimi 🔔</h2>
+      <p>Merhaba,</p>
+      <p>Bir kullanıcı NFC aboneliğini yeniledi.</p>
+      
+      <div class="info-box">
+        <h3 style="margin-top: 0;">Yenileme Detayları</h3>
+        <p><strong>NFC Adı:</strong> ${nfcName}</p>
+        <p><strong>Müşteri:</strong> ${customerName} (${customerEmail})</p>
+        <p><strong>Plan:</strong> ${planName} (${planMonths} ay)</p>
+        <p><strong>Tutar:</strong> <span class="highlight">₺${amount.toLocaleString('tr-TR')}</span></p>
+        <p><strong>Yeni Bitiş Tarihi:</strong> ${newEndDate}</p>
+      </div>
+
+      <p>Abonelikleri yönetmek için:</p>
+      <a href="https://esdodesign.com/admin/subscriptions" class="button">Abonelik Paneline Git</a>
+      
+      <p>Saygılarımızla,<br><strong>Esdodesign Abonelik Sistemi</strong></p>
+    `)
+  }),
+
   // Yeni Destek Talebi (Admin'e Bildirim)
   SUPPORT_NEW_TICKET: (ticketNumber: string, subject: string, category: string, customerName: string, customerEmail: string, message: string): EmailTemplate => ({
     subject: `Yeni Destek Talebi - #${ticketNumber}`,
@@ -492,6 +538,71 @@ export const sendNewOrderNotificationToAdmins = async (
         customerEmail,
         total,
         items,
+      },
+      headers: {
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+    });
+
+    if (error) {
+      console.error("❌ Edge Function hatası:", error);
+      return { success: false, error: error.message || "Edge Function çağrılamadı" };
+    }
+
+    console.log("✅ Edge Function yanıtı:", data);
+
+    if (data?.success) {
+      console.log(`✅ Admin bildirimleri başarılı: ${data.sentCount}/${data.totalAdmins} email gönderildi`);
+      return {
+        success: true,
+        sentCount: data.sentCount || 0,
+        failedCount: data.failedCount || 0,
+        totalAdmins: data.totalAdmins || 0,
+      };
+    } else {
+      console.error("❌ Admin bildirimi başarısız:", data?.error);
+      return { success: false, error: data?.error || "Email gönderilemedi" };
+    }
+  } catch (error: any) {
+    console.error("❌ Admin bildirimi exception:", error);
+    console.error("Error stack:", error.stack);
+    return { success: false, error: error.message || "Beklenmeyen hata" };
+  }
+};
+
+// Abonelik yenileme bildirimi (Kullanıcıya)
+export const sendSubscriptionRenewedEmail = async (
+  email: string,
+  nfcName: string,
+  planName: string,
+  newEndDate: string
+) => {
+  return sendEmail(email, EMAIL_TEMPLATES.SUBSCRIPTION_RENEWED(nfcName, planName, newEndDate));
+};
+
+// Abonelik yenileme bildirimi (Admin'lere) - Edge Function kullanarak
+export const sendSubscriptionRenewalNotificationToAdmins = async (
+  nfcName: string,
+  planName: string,
+  planMonths: number,
+  amount: number,
+  customerName: string,
+  customerEmail: string,
+  newEndDate: string
+) => {
+  try {
+    console.log("🔔 Abonelik yenileme admin bildirimi başlatılıyor...", { nfcName, customerEmail });
+    
+    // Edge Function'ı çağır (RLS bypass ile admin email'lerini alır)
+    const { data, error } = await supabase.functions.invoke("notify-admin-subscription", {
+      body: {
+        nfcName,
+        planName,
+        planMonths,
+        amount,
+        customerName,
+        customerEmail,
+        newEndDate,
       },
       headers: {
         Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,

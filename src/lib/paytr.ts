@@ -23,16 +23,33 @@ export interface PayTRTokenResponse {
 
 export async function createPayTRToken(request: PayTRTokenRequest): Promise<PayTRTokenResponse> {
   try {
-    // Session kontrolü ve refresh
-    let session = (await supabase.auth.getSession()).data.session;
+    // Her zaman önce session'ı refresh etmeyi dene
+    const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+    
+    let session = refreshedSession;
+    
+    // Refresh başarısız olduysa mevcut session'ı kontrol et
+    if (!session?.access_token) {
+      const { data: sessionData } = await supabase.auth.getSession();
+      session = sessionData.session;
+    }
     
     if (!session?.access_token) {
-      const { data: { session: refreshedSession } } = await supabase.auth.refreshSession();
-      if (!refreshedSession?.access_token) {
+      return { success: false, error: "Oturum süresi dolmuş. Lütfen tekrar giriş yapın." };
+    }
+
+    // Token'ın süresini kontrol et
+    const tokenExp = session.expires_at;
+    if (tokenExp && tokenExp * 1000 < Date.now()) {
+      // Token süresi dolmuş, tekrar refresh dene
+      const { data: { session: newSession } } = await supabase.auth.refreshSession();
+      if (!newSession?.access_token) {
         return { success: false, error: "Oturum süresi dolmuş. Lütfen tekrar giriş yapın." };
       }
-      session = refreshedSession;
+      session = newSession;
     }
+
+    console.log("PayTR request with session user:", session.user?.email);
 
     const { data, error } = await supabase.functions.invoke("create-paytr-token", {
       body: request,
@@ -40,6 +57,7 @@ export async function createPayTRToken(request: PayTRTokenRequest): Promise<PayT
     });
 
     if (error) {
+      console.error("PayTR function invoke error:", error);
       const errorMsg = error.message || "";
       if (errorMsg.includes("non-2xx") || errorMsg.includes("Edge Function")) {
         return { success: false, error: "Ödeme servisi kullanılamıyor. Lütfen daha sonra deneyin." };
@@ -51,6 +69,10 @@ export async function createPayTRToken(request: PayTRTokenRequest): Promise<PayT
     }
 
     if (!data?.success) {
+      // Oturum geçersiz hatası için özel mesaj
+      if (data?.error === "Oturum geçersiz") {
+        return { success: false, error: "Oturum geçersiz. Lütfen sayfayı yenileyip tekrar giriş yapın." };
+      }
       return { success: false, error: data?.error || "Ödeme başlatılamadı" };
     }
 

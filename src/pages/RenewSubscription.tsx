@@ -21,6 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createPayTRToken, loadPayTRIframe, encodeBasket, checkPaymentStatus } from "@/lib/paytr";
+import { sendSubscriptionRenewalNotificationToAdmins, sendSubscriptionRenewedEmail } from "@/lib/email";
 
 interface NFCRecord {
   id: string;
@@ -318,7 +319,7 @@ export default function RenewSubscription() {
   };
 
   const handlePaymentSuccess = async (orderId: string, orderNumber: string, plan: SubscriptionPlan) => {
-    if (!nfc) return;
+    if (!nfc || !user) return;
 
     try {
       setProcessing(true);
@@ -333,6 +334,12 @@ export default function RenewSubscription() {
       const newEndDate = new Date(
         baseDate.getTime() + plan.months * 30 * 24 * 60 * 60 * 1000
       );
+
+      const newEndDateStr = newEndDate.toLocaleDateString("tr-TR", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
 
       // Sipariş durumunu güncelle
       const { error: orderUpdateError } = await supabase
@@ -359,6 +366,49 @@ export default function RenewSubscription() {
         .eq("id", nfc.id);
 
       if (updateError) throw updateError;
+
+      // Kullanıcı bilgilerini hazırla
+      const customerName = profile?.first_name && profile?.last_name
+        ? `${profile.first_name} ${profile.last_name}`
+        : user.email?.split("@")[0] || "Kullanıcı";
+      const customerEmail = user.email || "";
+
+      // Admin'lere bildirim gönder (arka planda, hata olsa bile devam et)
+      sendSubscriptionRenewalNotificationToAdmins(
+        nfc.name,
+        plan.name,
+        plan.months,
+        plan.price,
+        customerName,
+        customerEmail,
+        newEndDateStr
+      ).then((result) => {
+        if (result.success) {
+          console.log("✅ Admin bildirimi gönderildi");
+        } else {
+          console.warn("⚠️ Admin bildirimi gönderilemedi:", result.error);
+        }
+      }).catch((err) => {
+        console.warn("⚠️ Admin bildirimi hatası:", err);
+      });
+
+      // Kullanıcıya bildirim emaili gönder (arka planda)
+      if (customerEmail) {
+        sendSubscriptionRenewedEmail(
+          customerEmail,
+          nfc.name,
+          plan.name,
+          newEndDateStr
+        ).then((result) => {
+          if (result.success) {
+            console.log("✅ Kullanıcıya email gönderildi");
+          } else {
+            console.warn("⚠️ Kullanıcı emaili gönderilemedi:", result.error);
+          }
+        }).catch((err) => {
+          console.warn("⚠️ Kullanıcı emaili hatası:", err);
+        });
+      }
 
       toast.success(
         `Abonelik ${plan.months} ay uzatıldı! Yeni bitiş: ${newEndDate.toLocaleDateString("tr-TR")}`
@@ -440,232 +490,234 @@ export default function RenewSubscription() {
             </p>
           </motion.div>
 
-          <div className="grid lg:grid-cols-3 gap-8">
-            {/* Left - NFC Info & Plans */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* NFC Summary */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="bg-card rounded-2xl p-6 border border-border/50"
-              >
-                <div className="flex items-start gap-4">
-                  <div
+          <div className="space-y-6">
+            {/* NFC Summary */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="bg-card rounded-2xl p-6 border border-border/50"
+            >
+              <div className="flex items-start gap-4">
+                <div
+                  className={cn(
+                    "w-14 h-14 rounded-xl flex items-center justify-center shrink-0",
+                    isExpired ? "bg-muted" : "gradient-primary"
+                  )}
+                >
+                  <TypeIcon
                     className={cn(
-                      "w-14 h-14 rounded-xl flex items-center justify-center shrink-0",
-                      isExpired ? "bg-muted" : "gradient-primary"
+                      "w-7 h-7",
+                      isExpired ? "text-muted-foreground" : "text-primary-foreground"
+                    )}
+                  />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-lg">{nfc.name}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {typeLabels[nfc.type] || nfc.type}
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Badge variant={isExpired ? "destructive" : "default"}>
+                      {isExpired
+                        ? "Süresi Dolmuş"
+                        : `${daysRemaining} gün kaldı`}
+                    </Badge>
+                    {nfc.subscription_end_date && (
+                      <span className="text-xs text-muted-foreground">
+                        Bitiş: {new Date(nfc.subscription_end_date).toLocaleDateString("tr-TR")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Subscription Plans */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+            >
+              <h2 className="text-xl font-semibold mb-4">Abonelik Planı Seçin</h2>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {plans.map((plan) => (
+                  <button
+                    key={plan.id}
+                    onClick={() => setSelectedPlan(plan.id)}
+                    className={cn(
+                      "relative p-6 rounded-2xl border-2 text-left transition-all",
+                      selectedPlan === plan.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border/50 hover:border-primary/50 bg-card"
                     )}
                   >
-                    <TypeIcon
-                      className={cn(
-                        "w-7 h-7",
-                        isExpired ? "text-muted-foreground" : "text-primary-foreground"
-                      )}
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">{nfc.name}</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {typeLabels[nfc.type] || nfc.type}
-                    </p>
-                    <div className="flex items-center gap-2 mt-2">
-                      <Badge variant={isExpired ? "destructive" : "default"}>
-                        {isExpired
-                          ? "Süresi Dolmuş"
-                          : `${daysRemaining} gün kaldı`}
+                    {plan.popular && (
+                      <Badge className="absolute -top-2 right-4 bg-primary text-primary-foreground">
+                        Popüler
                       </Badge>
-                      {nfc.subscription_end_date && (
-                        <span className="text-xs text-muted-foreground">
-                          Bitiş: {new Date(nfc.subscription_end_date).toLocaleDateString("tr-TR")}
+                    )}
+                    {plan.discount > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="absolute -top-2 left-4 border-accent text-accent"
+                      >
+                        %{plan.discount} İndirim
+                      </Badge>
+                    )}
+                    <div className="flex items-center gap-3 mb-3 mt-2">
+                      <div
+                        className={cn(
+                          "w-5 h-5 rounded-full border-2 flex items-center justify-center",
+                          selectedPlan === plan.id
+                            ? "border-primary bg-primary"
+                            : "border-muted-foreground"
+                        )}
+                      >
+                        {selectedPlan === plan.id && (
+                          <Check className="w-3 h-3 text-primary-foreground" />
+                        )}
+                      </div>
+                      <span className="font-semibold">{plan.name}</span>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-bold text-gradient">
+                        ₺{plan.price.toFixed(0)}
+                      </span>
+                      {plan.discount > 0 && (
+                        <span className="text-sm text-muted-foreground line-through">
+                          ₺{(product.monthly_subscription_fee * plan.months).toFixed(0)}
                         </span>
                       )}
                     </div>
-                  </div>
-                </div>
-              </motion.div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      ₺{(plan.price / plan.months).toFixed(0)}/ay
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
 
-              {/* Subscription Plans */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-              >
-                <h2 className="text-xl font-semibold mb-4">Abonelik Planı Seçin</h2>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  {plans.map((plan) => (
-                    <button
-                      key={plan.id}
-                      onClick={() => setSelectedPlan(plan.id)}
-                      className={cn(
-                        "relative p-6 rounded-2xl border-2 text-left transition-all",
-                        selectedPlan === plan.id
-                          ? "border-primary bg-primary/5"
-                          : "border-border/50 hover:border-primary/50 bg-card"
-                      )}
-                    >
-                      {plan.popular && (
-                        <Badge className="absolute -top-2 right-4 bg-primary text-primary-foreground">
-                          Popüler
-                        </Badge>
-                      )}
-                      {plan.discount > 0 && (
-                        <Badge
-                          variant="outline"
-                          className="absolute -top-2 left-4 border-accent text-accent"
-                        >
-                          %{plan.discount} İndirim
-                        </Badge>
-                      )}
-                      <div className="flex items-center gap-3 mb-3 mt-2">
-                        <div
-                          className={cn(
-                            "w-5 h-5 rounded-full border-2 flex items-center justify-center",
-                            selectedPlan === plan.id
-                              ? "border-primary bg-primary"
-                              : "border-muted-foreground"
-                          )}
-                        >
-                          {selectedPlan === plan.id && (
-                            <Check className="w-3 h-3 text-primary-foreground" />
-                          )}
-                        </div>
-                        <span className="font-semibold">{plan.name}</span>
-                      </div>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-bold text-gradient">
-                          ₺{plan.price.toFixed(0)}
-                        </span>
-                        {plan.discount > 0 && (
-                          <span className="text-sm text-muted-foreground line-through">
-                            ₺{(product.monthly_subscription_fee * plan.months).toFixed(0)}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        ₺{(plan.price / plan.months).toFixed(0)}/ay
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </motion.div>
-            </div>
-
-            {/* Right - Order Summary */}
+            {/* Order Summary & Payment - Below Plans */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="lg:col-span-1"
             >
-              <div className="bg-card rounded-2xl p-6 border border-border/50 sticky top-24">
-                <h3 className="font-semibold text-lg mb-4">Sipariş Özeti</h3>
+              <div className="bg-card rounded-2xl p-6 border border-border/50">
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Order Summary */}
+                  <div>
+                    <h3 className="font-semibold text-lg mb-4">Sipariş Özeti</h3>
 
-                <div className="space-y-3 pb-4 border-b border-border">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">NFC</span>
-                    <span>{nfc.name}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Plan</span>
-                    <span>{selectedPlanData?.name}</span>
-                  </div>
-                  {selectedPlanData && selectedPlanData.discount > 0 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">İndirim</span>
-                      <span className="text-accent">%{selectedPlanData.discount}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="py-4 border-b border-border">
-                  <div className="flex justify-between">
-                    <span className="font-semibold">Toplam</span>
-                    <span className="text-2xl font-bold text-gradient">
-                      ₺{selectedPlanData?.price.toFixed(0)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="pt-4 space-y-4">
-                  {!showPayTRIframe ? (
-                    <>
-                      <Button
-                        variant="hero"
-                        className="w-full"
-                        size="lg"
-                        onClick={handlePayment}
-                        disabled={processing}
-                      >
-                        {processing ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            İşleniyor...
-                          </>
-                        ) : (
-                          <>
-                            <CreditCard className="w-4 h-4 mr-2" />
-                            Ödeme Yap
-                          </>
-                        )}
-                      </Button>
-
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground justify-center">
-                        <Shield className="w-4 h-4" />
-                        <span>256-bit SSL ile güvenli ödeme</span>
+                    <div className="space-y-3 pb-4 border-b border-border">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">NFC</span>
+                        <span>{nfc.name}</span>
                       </div>
-                    </>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="bg-background rounded-lg border border-border p-4">
-                        <h3 className="font-semibold mb-2">Ödeme İşlemi</h3>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          Lütfen aşağıdaki formu doldurarak ödemenizi tamamlayın.
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Plan</span>
+                        <span>{selectedPlanData?.name}</span>
+                      </div>
+                      {selectedPlanData && selectedPlanData.discount > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">İndirim</span>
+                          <span className="text-accent">%{selectedPlanData.discount}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="py-4 border-b border-border">
+                      <div className="flex justify-between">
+                        <span className="font-semibold">Toplam</span>
+                        <span className="text-2xl font-bold text-gradient">
+                          ₺{selectedPlanData?.price.toFixed(0)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* New End Date Preview */}
+                    {selectedPlanData && (
+                      <div className="pt-4">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Clock className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-muted-foreground">Yeni bitiş tarihi:</span>
+                        </div>
+                        <p className="text-sm font-medium mt-1">
+                          {(() => {
+                            const currentEnd = nfc.subscription_end_date
+                              ? new Date(nfc.subscription_end_date)
+                              : new Date();
+                            const baseDate =
+                              currentEnd < new Date() ? new Date() : currentEnd;
+                            const newEnd = new Date(
+                              baseDate.getTime() +
+                                selectedPlanData.months * 30 * 24 * 60 * 60 * 1000
+                            );
+                            return newEnd.toLocaleDateString("tr-TR", {
+                              day: "numeric",
+                              month: "long",
+                              year: "numeric",
+                            });
+                          })()}
                         </p>
-                        <div id="paytr-iframe-container" className="w-full min-h-[600px]"></div>
                       </div>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setShowPayTRIframe(false);
-                          setPaymentId(null);
-                          setOrderId(null);
-                        }}
-                        className="w-full"
-                      >
-                        Ödeme Sayfasını Kapat
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                {/* New End Date Preview */}
-                {selectedPlanData && (
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Clock className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-muted-foreground">Yeni bitiş tarihi:</span>
-                    </div>
-                    <p className="text-sm font-medium mt-1">
-                      {(() => {
-                        const currentEnd = nfc.subscription_end_date
-                          ? new Date(nfc.subscription_end_date)
-                          : new Date();
-                        const baseDate =
-                          currentEnd < new Date() ? new Date() : currentEnd;
-                        const newEnd = new Date(
-                          baseDate.getTime() +
-                            selectedPlanData.months * 30 * 24 * 60 * 60 * 1000
-                        );
-                        return newEnd.toLocaleDateString("tr-TR", {
-                          day: "numeric",
-                          month: "long",
-                          year: "numeric",
-                        });
-                      })()}
-                    </p>
+                    )}
                   </div>
-                )}
+
+                  {/* Payment Section */}
+                  <div className="flex flex-col justify-center">
+                    {!showPayTRIframe ? (
+                      <div className="space-y-4">
+                        <Button
+                          variant="hero"
+                          className="w-full"
+                          size="lg"
+                          onClick={handlePayment}
+                          disabled={processing}
+                        >
+                          {processing ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              İşleniyor...
+                            </>
+                          ) : (
+                            <>
+                              <CreditCard className="w-4 h-4 mr-2" />
+                              Ödeme Yap
+                            </>
+                          )}
+                        </Button>
+
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground justify-center">
+                          <Shield className="w-4 h-4" />
+                          <span>256-bit SSL ile güvenli ödeme</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="bg-background rounded-lg border border-border p-4">
+                          <h3 className="font-semibold mb-2">Ödeme İşlemi</h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Lütfen aşağıdaki formu doldurarak ödemenizi tamamlayın.
+                          </p>
+                          <div id="paytr-iframe-container" className="w-full min-h-[600px]"></div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setShowPayTRIframe(false);
+                            setPaymentId(null);
+                            setOrderId(null);
+                          }}
+                          className="w-full"
+                        >
+                          Ödeme Sayfasını Kapat
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>

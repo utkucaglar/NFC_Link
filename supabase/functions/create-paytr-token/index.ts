@@ -63,6 +63,14 @@ Deno.serve(async (req) => {
     // Kullanıcı doğrulama
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
+      console.error("No authorization header provided");
+      throw new Error("Yetkilendirme gerekli");
+    }
+
+    // JWT token'ı çıkar
+    const token = authHeader.replace("Bearer ", "");
+    if (!token) {
+      console.error("No token in authorization header");
       throw new Error("Yetkilendirme gerekli");
     }
 
@@ -70,10 +78,17 @@ Deno.serve(async (req) => {
       global: { headers: { Authorization: authHeader } },
     });
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
-    if (userError || !user) {
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(token);
+    if (userError) {
+      console.error("User verification error:", userError.message, userError);
+      throw new Error("Oturum geçersiz: " + userError.message);
+    }
+    if (!user) {
+      console.error("No user found for token");
       throw new Error("Oturum geçersiz");
     }
+
+    console.log("Authenticated user:", user.email);
 
     // Request body
     const body: PayTRRequest = await req.json();
