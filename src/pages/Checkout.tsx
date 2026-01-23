@@ -428,7 +428,26 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
 
     } catch (error: any) {
       console.error('Payment error:', error);
-      toast.error(error.message || "Ödeme başlatılırken bir hata oluştu");
+      const errorMessage = error.message || "Ödeme başlatılırken bir hata oluştu";
+      
+      // Oturum süresi dolmuşsa kullanıcıyı login sayfasına yönlendir
+      if (errorMessage.includes("Oturum süresi dolmuş") || 
+          errorMessage.includes("Oturum bulunamadı") ||
+          errorMessage.includes("Unauthorized") ||
+          errorMessage.includes("401")) {
+        toast.error("Oturum süresi dolmuş. Lütfen tekrar giriş yapın.");
+        
+        // Session'ı temizle
+        await supabase.auth.signOut();
+        
+        // Login sayfasına yönlendir (return URL ile)
+        setTimeout(() => {
+          navigate("/login?redirect=/checkout");
+        }, 1500);
+        return;
+      }
+      
+      toast.error(errorMessage);
       setLoading(false);
     }
   };

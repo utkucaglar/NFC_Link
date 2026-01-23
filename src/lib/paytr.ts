@@ -39,13 +39,18 @@ export async function createPayTRToken(
     let { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
     // Eğer session yoksa veya geçersizse, refresh etmeyi dene
-    if (sessionError || !session) {
+    if (sessionError || !session || !session.access_token) {
+      console.log("Session yok veya geçersiz, refresh deneniyor...");
+      
+      // Önce mevcut refresh token ile refresh etmeyi dene
       const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
       
-      if (refreshError || !refreshedSession) {
+      if (refreshError || !refreshedSession || !refreshedSession.access_token) {
+        console.error("Session refresh başarısız:", refreshError);
         throw new Error("Oturum süresi dolmuş. Lütfen tekrar giriş yapın.");
       }
       
+      console.log("Session başarıyla refresh edildi");
       session = refreshedSession;
     }
 

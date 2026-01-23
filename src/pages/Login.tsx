@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { Mail, Lock, User, Eye, EyeOff, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,10 @@ import {
 } from "@/components/ui/dialog";
 
 export default function Login() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectTo = searchParams.get("redirect") || "/";
+  
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,7 +38,6 @@ export default function Login() {
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
   const { signIn, signUp, resetPassword } = useAuth();
-  const navigate = useNavigate();
 
   // Countdown timer for resend button
   useEffect(() => {
@@ -183,7 +186,8 @@ export default function Login() {
     try {
       if (isLogin) {
         await signIn(email, password);
-        navigate("/");
+        // Redirect parametresine göre yönlendir
+        navigate(redirectTo);
       } else {
         await signUp(email, password, firstName, lastName);
         setShowVerification(true);
