@@ -1,37 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence, PanInfo } from "framer-motion";
 import { Link } from "react-router-dom";
-import productCard from "@/assets/product-nfc-card.png";
-import productBand from "@/assets/product-nfc-band.png";
-import productPetTag from "@/assets/product-pet-tag.png";
+import { supabase } from "@/lib/supabase";
 
-interface Product {
-  id: number;
-  name: string;
-  description: string | null;
-  price: number;
-  category: string;
-  image_url: string | null;
+interface ShowcaseImage {
+  id: string;
+  url: string;
+  link?: string;
 }
 
 interface ProductSwiperProps {
   autoPlayInterval?: number; // Otomatik geçiş süresi (ms)
 }
 
-// Helper function to get product image
-const getProductImage = (imageUrl: string | null, category: string) => {
-  if (imageUrl && (imageUrl.startsWith('http') || imageUrl.startsWith('https'))) {
-    return imageUrl;
-  }
-  // Fallback to local images based on category
-  if (category === "Profesyonel" || category === "Premium") return productCard;
-  if (category === "Spor & Etkinlik") return productBand;
-  if (category === "Evcil Hayvan") return productPetTag;
-  return productCard;
-};
-
 export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiperProps) {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [images, setImages] = useState<ShowcaseImage[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dragDirection, setDragDirection] = useState<number>(0);
@@ -39,70 +22,57 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
   const [hasDragged, setHasDragged] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Veritabanından ürünleri çek
+  // Veritabanından vitrin görsellerini çek
   useEffect(() => {
     let isMounted = true;
-    const controller = new AbortController();
 
-    const fetchProducts = async () => {
+    const fetchShowcaseImages = async () => {
       try {
         setLoading(true);
 
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-        if (!supabaseUrl || !supabaseKey) {
-          throw new Error('Supabase yapılandırması eksik');
-        }
-
-        const response = await fetch(
-          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url&is_active=eq.true&order=sort_order.asc`,
-          {
-            method: 'GET',
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
-            },
-            signal: controller.signal
-          }
-        );
+        const { data, error } = await supabase
+          .from("site_settings")
+          .select("value")
+          .eq("key", "showcase_images")
+          .single();
 
         if (!isMounted) return;
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+        if (error) {
+          console.error('Showcase images fetch error:', error);
+          setLoading(false);
+          return;
         }
 
-        const data = await response.json();
-
-        if (data && data.length > 0 && isMounted) {
-          setProducts(data);
-          setCurrentIndex(0);
+        if (data && data.value) {
+          try {
+            const parsedImages = JSON.parse(data.value);
+            if (Array.isArray(parsedImages) && parsedImages.length > 0) {
+              setImages(parsedImages);
+              setCurrentIndex(0);
+            }
+          } catch (parseErr) {
+            console.error('JSON parse error:', parseErr);
+          }
         }
         setLoading(false);
       } catch (err: any) {
         if (!isMounted) return;
-        if (err.name === 'AbortError') {
-          return;
-        }
-        console.error('Error fetching products:', err);
+        console.error('Error fetching showcase images:', err);
         setLoading(false);
       }
     };
 
-    fetchProducts();
+    fetchShowcaseImages();
 
     return () => {
       isMounted = false;
-      controller.abort();
     };
   }, []);
 
   // Otomatik geçiş
   useEffect(() => {
-    if (products.length <= 1) return;
+    if (images.length <= 1) return;
 
     const startAutoPlay = () => {
       if (intervalRef.current) {
@@ -110,7 +80,7 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
       }
 
       intervalRef.current = setInterval(() => {
-        setCurrentIndex((prev) => (prev + 1) % products.length);
+        setCurrentIndex((prev) => (prev + 1) % images.length);
       }, autoPlayInterval);
     };
 
@@ -121,7 +91,7 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
         clearInterval(intervalRef.current);
       }
     };
-  }, [products.length, autoPlayInterval]);
+  }, [images.length, autoPlayInterval]);
 
   // Swipe işlemleri
   const handleDragStart = () => {
@@ -140,21 +110,21 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
     setIsDragging(false);
     setHasDragged(wasSignificantDrag);
     
-    if (wasSignificantDrag && products.length > 0) {
+    if (wasSignificantDrag && images.length > 0) {
       if (info.offset.x > 0) {
-        // Sağa swipe - önceki ürün (sarmalama ile)
-        const newIndex = currentIndex > 0 ? currentIndex - 1 : products.length - 1;
+        // Sağa swipe - önceki görsel (sarmalama ile)
+        const newIndex = currentIndex > 0 ? currentIndex - 1 : images.length - 1;
         goToSlide(newIndex);
       } else {
-        // Sola swipe - sonraki ürün (sarmalama ile)
-        const newIndex = (currentIndex + 1) % products.length;
+        // Sola swipe - sonraki görsel (sarmalama ile)
+        const newIndex = (currentIndex + 1) % images.length;
         goToSlide(newIndex);
       }
     } else {
       // Swipe yeterli değilse otomatik geçişi yeniden başlat
-      if (products.length > 1) {
+      if (images.length > 1) {
         intervalRef.current = setInterval(() => {
-          setCurrentIndex((prev) => (prev + 1) % products.length);
+          setCurrentIndex((prev) => (prev + 1) % images.length);
         }, autoPlayInterval);
       }
     }
@@ -177,7 +147,7 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
         clearInterval(intervalRef.current);
       }
       intervalRef.current = setInterval(() => {
-        setCurrentIndex((prev) => (prev + 1) % products.length);
+        setCurrentIndex((prev) => (prev + 1) % images.length);
       }, autoPlayInterval);
     }, 100);
   };
@@ -203,18 +173,33 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
     );
   }
 
-  if (!products || products.length === 0) {
-    // Fallback görsel
+  if (!images || images.length === 0) {
+    // Görsel yoksa boş göster
     return (
       <div className="relative w-full max-w-lg mx-auto">
         <div className="aspect-square rounded-3xl shadow-2xl bg-muted/30 flex items-center justify-center">
-          <p className="text-muted-foreground">Ürün bulunamadı</p>
+          <p className="text-muted-foreground text-center px-4">
+            Vitrin görseli bulunamadı.<br />
+            <span className="text-sm">Admin panelinden görsel ekleyin.</span>
+          </p>
         </div>
       </div>
     );
   }
 
-  const currentProduct = products[currentIndex];
+  const currentImage = images[currentIndex];
+
+  const ImageContent = () => (
+    <div className="block aspect-square bg-muted/30 flex items-center justify-center overflow-hidden relative group cursor-pointer">
+      <img
+        src={currentImage.url}
+        alt={`Vitrin ${currentIndex + 1}`}
+        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+      />
+      {/* Hover overlay */}
+      <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors duration-300 rounded-3xl" />
+    </div>
+  );
 
   return (
     <div className="relative w-full max-w-lg mx-auto">
@@ -238,40 +223,15 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="relative"
           >
-            <Link 
-              to={`/product/${currentProduct.id}`}
-              onClick={handleImageClick}
-              className="block aspect-square bg-muted/30 flex items-center justify-center overflow-hidden relative group cursor-pointer"
-            >
-              <img
-                src={getProductImage(currentProduct.image_url, currentProduct.category)}
-                alt={currentProduct.name}
-                className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105"
-                style={{ maxHeight: '100%', maxWidth: '100%' }}
-                onError={(e) => {
-                  const target = e.target as HTMLImageElement;
-                  // Fallback görselini göster
-                  const fallbackSrc = getProductImage(null, currentProduct.category);
-                  if (target.src !== fallbackSrc) {
-                    target.src = fallbackSrc;
-                  } else {
-                    // Eğer fallback da çalışmazsa, metni göster
-                    target.style.display = 'none';
-                    if (target.parentElement) {
-                      const fallbackDiv = document.createElement('div');
-                      fallbackDiv.className = 'text-muted-foreground p-8 text-center';
-                      fallbackDiv.innerHTML = `
-                        <p class="text-lg font-semibold">${currentProduct.name}</p>
-                        <p class="text-sm mt-2">₺${currentProduct.price}</p>
-                      `;
-                      target.parentElement.appendChild(fallbackDiv);
-                    }
-                  }
-                }}
-              />
-              {/* Hover overlay */}
-              <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors duration-300 rounded-3xl" />
-            </Link>
+            {currentImage.link ? (
+              <Link to={currentImage.link} onClick={handleImageClick}>
+                <ImageContent />
+              </Link>
+            ) : (
+              <div onClick={handleImageClick}>
+                <ImageContent />
+              </div>
+            )}
           </motion.div>
         </AnimatePresence>
 
@@ -281,9 +241,9 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
       </motion.div>
 
       {/* Dot Indicators */}
-      {products.length > 1 && (
+      {images.length > 1 && (
         <div className="flex justify-center gap-2 mt-6">
-          {products.map((_, index) => (
+          {images.map((_, index) => (
             <button
               key={index}
               onClick={() => goToSlide(index)}
@@ -292,7 +252,7 @@ export default function ProductSwiper({ autoPlayInterval = 4000 }: ProductSwiper
                   ? "w-8 h-3 bg-primary"
                   : "w-3 h-3 bg-muted-foreground/30 hover:bg-muted-foreground/50"
               }`}
-              aria-label={`Ürün ${index + 1}'e geç`}
+              aria-label={`Görsel ${index + 1}'e geç`}
             />
           ))}
         </div>

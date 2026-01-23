@@ -433,7 +433,7 @@ export default function Index() {
               </div>
               <div>
                 <h3 className="font-semibold mb-1">Ücretsiz Deneme</h3>
-                <p className="text-sm text-muted-foreground">İlk ay tamamen ücretsiz</p>
+                <p className="text-sm text-muted-foreground">İlk 3 ay tamamen ücretsiz</p>
               </div>
             </motion.div>
           </div>

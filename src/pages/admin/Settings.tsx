@@ -14,6 +14,10 @@ import {
   Instagram,
   Globe,
   MapPin,
+  Image,
+  Upload,
+  Trash2,
+  Plus,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -46,6 +50,12 @@ interface SocialSettings {
   email_address: string;
 }
 
+interface ShowcaseImage {
+  id: string;
+  url: string;
+  link?: string;
+}
+
 const defaultSmsSettings: SmsSettings = {
   provider: "netgsm",
   api_key: "",
@@ -71,10 +81,13 @@ export default function AdminSettings() {
   const [smsSettings, setSmsSettings] = useState<SmsSettings>(defaultSmsSettings);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(defaultEmailSettings);
   const [socialSettings, setSocialSettings] = useState<SocialSettings>(defaultSocialSettings);
+  const [showcaseImages, setShowcaseImages] = useState<ShowcaseImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingEmail, setSavingEmail] = useState(false);
   const [savingSocial, setSavingSocial] = useState(false);
+  const [savingShowcase, setSavingShowcase] = useState(false);
+  const [uploadingShowcase, setUploadingShowcase] = useState(false);
   const [testPhone, setTestPhone] = useState("");
   const [testMessage, setTestMessage] = useState("Test mesajı - Esdodesign");
   const [testEmail, setTestEmail] = useState("");
@@ -121,6 +134,17 @@ export default function AdminSettings() {
 
       if (socialData) {
         setSocialSettings(JSON.parse(socialData.value));
+      }
+
+      // Vitrin görselleri
+      const { data: showcaseData } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "showcase_images")
+        .single();
+
+      if (showcaseData) {
+        setShowcaseImages(JSON.parse(showcaseData.value));
       }
     } catch (err) {
       console.error("Ayarlar yüklenemedi:", err);
@@ -190,6 +214,88 @@ export default function AdminSettings() {
     } finally {
       setSavingSocial(false);
     }
+  };
+
+  const handleSaveShowcase = async () => {
+    setSavingShowcase(true);
+    try {
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert({
+          key: "showcase_images",
+          value: JSON.stringify(showcaseImages),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "key" });
+
+      if (error) throw error;
+      toast.success("Vitrin görselleri kaydedildi");
+    } catch (err) {
+      console.error("Kaydetme hatası:", err);
+      toast.error("Ayarlar kaydedilemedi");
+    } finally {
+      setSavingShowcase(false);
+    }
+  };
+
+  const handleShowcaseImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Dosya boyutu kontrolü (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Dosya boyutu 5MB'dan küçük olmalıdır");
+      return;
+    }
+
+    // Dosya türü kontrolü
+    if (!file.type.startsWith("image/")) {
+      toast.error("Sadece resim dosyaları yüklenebilir");
+      return;
+    }
+
+    setUploadingShowcase(true);
+    try {
+      const fileExt = file.name.split(".").pop();
+      const fileName = `showcase_${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("product-images")
+        .upload(fileName, file, { cacheControl: "3600", upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from("product-images")
+        .getPublicUrl(fileName);
+
+      const newImage: ShowcaseImage = {
+        id: Date.now().toString(),
+        url: urlData.publicUrl,
+        link: "",
+      };
+
+      setShowcaseImages([...showcaseImages, newImage]);
+      toast.success("Görsel yüklendi");
+    } catch (err) {
+      console.error("Yükleme hatası:", err);
+      toast.error("Görsel yüklenemedi");
+    } finally {
+      setUploadingShowcase(false);
+      // Input'u sıfırla
+      e.target.value = "";
+    }
+  };
+
+  const handleRemoveShowcaseImage = (id: string) => {
+    setShowcaseImages(showcaseImages.filter((img) => img.id !== id));
+  };
+
+  const handleShowcaseLinkChange = (id: string, link: string) => {
+    setShowcaseImages(
+      showcaseImages.map((img) =>
+        img.id === id ? { ...img, link } : img
+      )
+    );
   };
 
   const handleTestEmail = async () => {
@@ -352,6 +458,120 @@ export default function AdminSettings() {
                 <>
                   <Save className="w-4 h-4 mr-2" />
                   Sosyal Medya Ayarlarını Kaydet
+                </>
+              )}
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Showcase Images Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
+              <Image className="w-5 h-5 text-purple-500" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Vitrin Görselleri</h2>
+              <p className="text-sm text-muted-foreground">
+                Ana sayfadaki slider görselleri
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Size Info */}
+            <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+              <p className="text-sm font-medium text-purple-600 dark:text-purple-400 mb-2">
+                📐 Önerilen Görsel Boyutları
+              </p>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                <li>• <strong>Boyut:</strong> 800 x 800 piksel (kare)</li>
+                <li>• <strong>Format:</strong> JPG, PNG veya WebP</li>
+                <li>• <strong>Maksimum dosya boyutu:</strong> 5MB</li>
+                <li>• <strong>En-boy oranı:</strong> 1:1 (kare görsel)</li>
+              </ul>
+            </div>
+
+            {/* Current Images */}
+            {showcaseImages.length > 0 && (
+              <div className="space-y-4">
+                <Label>Mevcut Görseller ({showcaseImages.length})</Label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {showcaseImages.map((img, index) => (
+                    <div key={img.id} className="relative group">
+                      <div className="aspect-square rounded-lg overflow-hidden border border-border bg-muted/30">
+                        <img
+                          src={img.url}
+                          alt={`Vitrin ${index + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
+                        {index + 1}
+                      </div>
+                      <button
+                        onClick={() => handleRemoveShowcaseImage(img.id)}
+                        className="absolute top-2 right-2 p-1.5 bg-destructive text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <Input
+                        placeholder="Link (opsiyonel)"
+                        value={img.link || ""}
+                        onChange={(e) => handleShowcaseLinkChange(img.id, e.target.value)}
+                        className="mt-2 text-xs"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Upload Button */}
+            <div>
+              <Label className="block mb-2">Yeni Görsel Ekle</Label>
+              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-border rounded-lg cursor-pointer hover:bg-muted/30 transition-colors">
+                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                  {uploadingShowcase ? (
+                    <Loader2 className="w-8 h-8 text-muted-foreground animate-spin" />
+                  ) : (
+                    <>
+                      <Upload className="w-8 h-8 text-muted-foreground mb-2" />
+                      <p className="text-sm text-muted-foreground">
+                        Görsel yüklemek için tıklayın
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        800x800 piksel önerilir
+                      </p>
+                    </>
+                  )}
+                </div>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handleShowcaseImageUpload}
+                  disabled={uploadingShowcase}
+                />
+              </label>
+            </div>
+
+            {/* Save Button */}
+            <Button onClick={handleSaveShowcase} disabled={savingShowcase || showcaseImages.length === 0} className="w-full">
+              {savingShowcase ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Kaydediliyor...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Vitrin Görsellerini Kaydet
                 </>
               )}
             </Button>
