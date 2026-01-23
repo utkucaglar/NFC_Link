@@ -46,25 +46,39 @@ async function createPayTRHash(data: string, key: string): Promise<string> {
 }
 
 Deno.serve(async (req) => {
+  // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
+    // Environment variables kontrolü
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
+      throw new Error("Supabase configuration missing");
+    }
+
     // JWT doğrulaması
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
+      console.error("Authorization header missing");
       throw new Error("Authorization header missing");
     }
 
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      { global: { headers: { Authorization: authHeader } } }
-    );
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
 
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
-    if (userError || !user) {
+    if (userError) {
+      console.error("User auth error:", userError.message);
+      throw new Error("Unauthorized: " + userError.message);
+    }
+    if (!user) {
+      console.error("No user found");
       throw new Error("Unauthorized");
     }
 
@@ -92,7 +106,14 @@ Deno.serve(async (req) => {
     const merchant_key = Deno.env.get("PAYTR_MERCHANT_KEY");
     const merchant_salt = Deno.env.get("PAYTR_MERCHANT_SALT");
 
+    console.log("PayTR credentials check:", {
+      merchant_id: merchant_id ? "SET" : "MISSING",
+      merchant_key: merchant_key ? "SET" : "MISSING",
+      merchant_salt: merchant_salt ? "SET" : "MISSING",
+    });
+
     if (!merchant_id || !merchant_key || !merchant_salt) {
+      console.error("PayTR credentials missing");
       throw new Error("PayTR credentials not configured");
     }
 
@@ -141,6 +162,17 @@ Deno.serve(async (req) => {
     formData.append("test_mode", test_mode);
     formData.append("lang", lang);
 
+    console.log("Sending request to PayTR API...");
+    console.log("Request params:", {
+      merchant_id,
+      merchant_oid: order_number,
+      email: user_email,
+      payment_amount: amount,
+      user_ip,
+      currency,
+      test_mode,
+    });
+
     const paytrResponse = await fetch("https://www.paytr.com/odeme/api/get-token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -148,9 +180,10 @@ Deno.serve(async (req) => {
     });
 
     const paytrResult = await paytrResponse.json();
+    console.log("PayTR API response:", paytrResult);
 
     if (paytrResult.status !== "success") {
-      console.error("PayTR error:", paytrResult);
+      console.error("PayTR API error:", paytrResult);
       throw new Error(paytrResult.reason || "PayTR token oluşturulamadı");
     }
 
