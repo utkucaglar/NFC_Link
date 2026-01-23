@@ -190,10 +190,28 @@ export default function RenewSubscription() {
       return;
     }
 
-    // Telefon numarası format kontrolü
-    const phoneNumber = userPhone.replace(/\s/g, '');
+    // Telefon numarasını parse et ve PayTR formatına çevir
+    // Profil telefonu genellikle "+905538064115" formatında gelir
+    // PayTR için "05538064115" formatına (0 ile başlayan 11 haneli) çevirmemiz gerekiyor
+    let phoneNumber = userPhone.replace(/\s/g, '');
+    
+    // Eğer +90 ile başlıyorsa, +90'ı kaldır ve başına 0 ekle
+    if (phoneNumber.startsWith('+90')) {
+      phoneNumber = '0' + phoneNumber.substring(3);
+    } 
+    // Eğer 90 ile başlıyorsa (ama + yok), 90'ı kaldır ve başına 0 ekle
+    else if (phoneNumber.startsWith('90') && phoneNumber.length > 10) {
+      phoneNumber = '0' + phoneNumber.substring(2);
+    }
+    // Eğer zaten 0 ile başlıyorsa, olduğu gibi kullan
+    // Eğer hiçbiri değilse, başına 0 ekle (eğer 10 haneli ise)
+    else if (!phoneNumber.startsWith('0') && phoneNumber.length === 10) {
+      phoneNumber = '0' + phoneNumber;
+    }
+
+    // PayTR format kontrolü: 0 ile başlayan 11 haneli olmalı
     if (!/^0[0-9]{10}$/.test(phoneNumber)) {
-      toast.info("Geçerli bir telefon numarası eklemeniz gerekiyor (örn: 05XXXXXXXXX)");
+      toast.info("Geçerli bir telefon numarası eklemeniz gerekiyor (örn: 05XXXXXXXXX). Lütfen profil bilgilerinizi kontrol edin.");
       navigate("/profile");
       return;
     }
