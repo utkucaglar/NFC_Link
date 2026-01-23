@@ -171,19 +171,27 @@ export default function NFCBusinessCard() {
 
   // VCF dosyası oluştur
   const generateVCard = () => {
-    const vcard = `BEGIN:VCARD
-VERSION:3.0
-FN:${data.name}
-TITLE:${data.title}
-ORG:${data.company}
-TEL:${data.phone}
-EMAIL:${data.email}
-${data.website ? `URL:${data.website}` : ""}
-${data.linkedin ? `X-SOCIALPROFILE;type=linkedin:https://linkedin.com/in/${data.linkedin}` : ""}
-NOTE:${data.bio || ""}
-END:VCARD`;
+    // vCard satırları (boş olanları filtrele)
+    const lines = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `FN:${data.name}`,
+      data.title ? `TITLE:${data.title}` : "",
+      data.company ? `ORG:${data.company}` : "",
+      data.phone ? `TEL;TYPE=CELL:${data.phone}` : "",
+      data.email ? `EMAIL:${data.email}` : "",
+      data.website ? `URL:${data.website}` : "",
+      data.linkedin ? `X-SOCIALPROFILE;type=linkedin:https://linkedin.com/in/${data.linkedin}` : "",
+      data.instagram ? `X-SOCIALPROFILE;type=instagram:https://instagram.com/${data.instagram}` : "",
+      data.bio ? `NOTE:${data.bio.replace(/\n/g, "\\n")}` : "",
+      "END:VCARD"
+    ].filter(line => line !== "");
 
-    const blob = new Blob([vcard], { type: "text/vcard" });
+    // vCard standardı CRLF kullanır
+    const vcard = lines.join("\r\n");
+
+    // UTF-8 BOM ile Blob oluştur (Türkçe karakter desteği)
+    const blob = new Blob(["\ufeff" + vcard], { type: "text/vcard;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
