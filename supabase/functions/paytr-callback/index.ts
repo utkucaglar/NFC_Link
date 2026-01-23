@@ -314,7 +314,6 @@ Deno.serve(async (req) => {
           total,
           shipping_address,
           user_id,
-          items,
           invoice_sent
         `)
         .eq("id", payment.order_id)
@@ -359,16 +358,27 @@ Deno.serve(async (req) => {
               shippingAddress.postal_code
             ].filter(Boolean).join(', ');
 
-            // Order items'ı parse et
+            // Order items'ı order_items tablosundan çek
             let orderItems: Array<{ name: string; quantity: number; price: number }> = [];
-            try {
-              if (typeof order.items === 'string') {
-                orderItems = JSON.parse(order.items);
-              } else if (Array.isArray(order.items)) {
-                orderItems = order.items;
-              }
-            } catch (e) {
-              console.error("PayTR callback: Items parse error", e);
+            const { data: orderItemsData, error: orderItemsError } = await supabaseAdmin
+              .from("order_items")
+              .select(`
+                quantity,
+                price,
+                products(name)
+              `)
+              .eq("order_id", payment.order_id);
+
+            if (orderItemsError) {
+              console.error("PayTR callback: Order items fetch error", orderItemsError);
+              orderItems = [{ name: "Ürün", quantity: 1, price: order.total }];
+            } else if (orderItemsData && orderItemsData.length > 0) {
+              orderItems = orderItemsData.map((item: any) => ({
+                name: item.products?.name || "Ürün",
+                quantity: item.quantity,
+                price: item.price
+              }));
+            } else {
               orderItems = [{ name: "Ürün", quantity: 1, price: order.total }];
             }
 
