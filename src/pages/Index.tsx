@@ -86,7 +86,6 @@ export default function Index() {
   const { addToCart } = useCart();
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
-  const [stats, setStats] = useState({ userCount: 0, scanCount: 0, avgRating: 4.9 });
 
   const requiresCustomization = (p: Product): boolean =>
     (p.nfc_type === "business-card" || p.nfc_type === "pet-id" || p.nfc_type === "redirect");
@@ -132,41 +131,7 @@ export default function Index() {
       }
     };
 
-    const fetchStats = async () => {
-      try {
-        // Kullanıcı sayısı
-        const { count: userCount } = await supabase
-          .from('user_profiles')
-          .select('*', { count: 'exact', head: true });
-
-        // NFC tarama sayısı
-        const { count: scanCount } = await supabase
-          .from('nfc_scans')
-          .select('*', { count: 'exact', head: true });
-
-        // Ortalama puan
-        const { data: ratingData } = await supabase
-          .from('reviews')
-          .select('rating');
-
-        let avgRating = 4.9;
-        if (ratingData && ratingData.length > 0) {
-          const sum = ratingData.reduce((acc, r) => acc + (r.rating || 0), 0);
-          avgRating = Math.round((sum / ratingData.length) * 10) / 10;
-        }
-
-        setStats({
-          userCount: userCount || 0,
-          scanCount: scanCount || 0,
-          avgRating
-        });
-      } catch (error) {
-        console.error('İstatistikler yüklenemedi:', error);
-      }
-    };
-
     fetchProducts();
-    fetchStats();
   }, []);
 
   return (
@@ -226,26 +191,6 @@ export default function Index() {
                 </Button>
               </div>
               
-              <div className="mt-10 flex items-center gap-8 justify-center lg:justify-start">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-gradient">
-                    {stats.userCount >= 1000 ? `${(stats.userCount / 1000).toFixed(1)}K+` : stats.userCount}
-                  </p>
-                  <p className="text-sm text-muted-foreground">Aktif Kullanıcı</p>
-                </div>
-                <div className="w-px h-12 bg-border" />
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-gradient">
-                    {stats.scanCount >= 1000 ? `${(stats.scanCount / 1000).toFixed(1)}K+` : stats.scanCount}
-                  </p>
-                  <p className="text-sm text-muted-foreground">NFC Tarama</p>
-                </div>
-                <div className="w-px h-12 bg-border" />
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-gradient">{stats.avgRating}</p>
-                  <p className="text-sm text-muted-foreground">Puan</p>
-                </div>
-              </div>
             </motion.div>
             
             <motion.div
