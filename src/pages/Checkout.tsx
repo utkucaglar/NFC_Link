@@ -30,6 +30,12 @@ import { Badge } from "@/components/ui/badge";
 import { toUpperCaseTurkish } from "@/lib/helpers";
 import { createPayTRToken, encodeBasket, loadPayTRIframe, checkPaymentStatus } from "@/lib/paytr";
 
+const addMonths = (date: Date, months: number): Date => {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d;
+};
+
 // Türkiye illeri
 const cities = [
   "Adana", "Adıyaman", "Afyonkarahisar", "Ağrı", "Amasya", "Ankara", "Antalya", "Artvin",
@@ -603,6 +609,10 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
               nfcName = `Sevgililer - ${customization.partnerName1} & ${customization.partnerName2}`;
             }
 
+            // Abonelik var mı? (aboneliği olmayan ürünlerde freeSubscriptionMonths gönderilmez)
+            const hasSubscription = customization.freeSubscriptionMonths !== undefined && customization.freeSubscriptionMonths !== null;
+            const freeMonths = Math.max(0, Number(customization.freeSubscriptionMonths ?? 0));
+
             nfcRecords.push({
               user_id: user?.id,
               name: nfcName,
@@ -611,8 +621,11 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
               is_active: true,
               data: nfcData,
               theme: customization.theme || "default",
-              subscription_status: "active",
-              subscription_end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 gün sonra
+              subscription_status: hasSubscription ? "active" : "inactive",
+              // Abonelik yoksa NULL; varsa admin panelindeki "Bedava Abonelik (Ay)" kadar başlat
+              subscription_end_date: hasSubscription
+                ? addMonths(new Date(), freeMonths).toISOString()
+                : null,
               product_id: item.productId || item.id, // Ürün ID'si - abonelik yenileme için gerekli
             });
           }

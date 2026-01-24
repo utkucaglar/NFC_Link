@@ -767,7 +767,8 @@ export default function ProductDetail() {
       baseCustomization.nfcType = nfcType;
       if (hasSub) {
         baseCustomization.subscriptionFee = product.monthly_subscription_fee || 29;
-        baseCustomization.freeSubscriptionMonths = product.free_subscription_months || 1;
+        // 0 geçerli bir değerdir (bedava ay yok); bu yüzden || yerine ?? kullan
+        baseCustomization.freeSubscriptionMonths = product.free_subscription_months ?? 1;
       }
     }
     // İndirim bilgisini de ekle

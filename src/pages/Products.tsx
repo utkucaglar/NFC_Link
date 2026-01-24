@@ -84,7 +84,8 @@ export default function Products() {
       const customization: Record<string, unknown> = {};
       if (hasSub(product)) {
         customization.subscriptionFee = product.monthly_subscription_fee || 29;
-        customization.freeSubscriptionMonths = product.free_subscription_months || 1;
+        // 0 geçerli bir değerdir (bedava ay yok); bu yüzden || yerine ?? kullan
+        customization.freeSubscriptionMonths = product.free_subscription_months ?? 1;
       }
       // İndirim bilgisini de ekle
       if (isDiscountActive(product)) {
