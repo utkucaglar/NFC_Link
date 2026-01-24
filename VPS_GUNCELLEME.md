@@ -107,7 +107,6 @@ VPS'te hazır bir script kullanabilirsiniz:
 cd /var/www/nfclink/NFC_Link
 ./deploy-vps.sh
 ```
-
 **Not:** Eğer script yoksa, aşağıdaki komutları tek tek çalıştırın.
 ---
 
