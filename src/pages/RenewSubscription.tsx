@@ -148,23 +148,42 @@ export default function RenewSubscription() {
 
       setNfc(nfcData);
 
-      // Ürün fiyatını çekmek için - varsayılan 29 TL
-      // Eğer NFC'ye bağlı bir product_id varsa onu kullan
+      // Ürün fiyatını çekmek için
       let monthlyFee = 29; // Varsayılan
+      let productName = "NFC Abonelik";
+      let productId = 0;
 
-      // Products tablosundan genel subscription fee'yi kontrol et
-      const { data: productsData } = await supabase
-        .from("products")
-        .select("id, name, monthly_subscription_fee")
-        .limit(1);
+      // NFC'ye bağlı product_id varsa o ürünün fiyatını çek
+      if (nfcData.product_id) {
+        const { data: productData } = await supabase
+          .from("products")
+          .select("id, name, monthly_subscription_fee")
+          .eq("id", nfcData.product_id)
+          .single();
 
-      if (productsData && productsData.length > 0 && productsData[0].monthly_subscription_fee) {
-        monthlyFee = productsData[0].monthly_subscription_fee;
+        if (productData && productData.monthly_subscription_fee) {
+          monthlyFee = productData.monthly_subscription_fee;
+          productName = productData.name;
+          productId = productData.id;
+        }
+      } else {
+        // product_id yoksa, NFC tipine göre ürün ara
+        const { data: productsData } = await supabase
+          .from("products")
+          .select("id, name, monthly_subscription_fee")
+          .ilike("name", `%${nfcData.type}%`)
+          .limit(1);
+
+        if (productsData && productsData.length > 0 && productsData[0].monthly_subscription_fee) {
+          monthlyFee = productsData[0].monthly_subscription_fee;
+          productName = productsData[0].name;
+          productId = productsData[0].id;
+        }
       }
 
       setProduct({
-        id: 0,
-        name: "NFC Abonelik",
+        id: productId,
+        name: productName,
         monthly_subscription_fee: monthlyFee,
       });
     } catch (error) {
