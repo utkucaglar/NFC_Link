@@ -552,16 +552,31 @@ export default function NFCRedirect() {
 
           {/* Counter Card */}
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-            className="bg-white/[0.08] backdrop-blur-2xl rounded-[28px] border border-white/10 p-8 md:p-10 shadow-2xl w-full max-w-2xl">
-            <div className="grid grid-cols-4 gap-4 md:gap-6 mb-8">
+            className="bg-white/[0.08] backdrop-blur-2xl rounded-[28px] border border-white/10 p-6 sm:p-8 md:p-10 shadow-2xl w-auto max-w-[95vw]">
+            <div className="flex flex-wrap justify-center gap-3 sm:gap-4 md:gap-6 mb-8">
+              {/* Gün - Genişleyebilir */}
+              <div className="bg-black/25 rounded-2xl px-4 sm:px-6 md:px-8 py-4 sm:py-5 md:py-6 text-center border border-white/5 min-w-[80px] sm:min-w-[100px]">
+                <div 
+                  className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl mb-2 font-semibold leading-tight whitespace-nowrap" 
+                  style={{ fontFamily: "'Cinzel', serif" }}
+                >
+                  {timeElapsed.days}
+                </div>
+                <div className="text-white/50 text-[10px] md:text-xs tracking-[0.2em] uppercase">GÜN</div>
+              </div>
+              {/* Saat, Dakika, Saniye - Sabit boyut */}
               {[
-                { value: timeElapsed.days, label: "GÜN" },
                 { value: String(timeElapsed.hours).padStart(2, "0"), label: "SAAT" },
                 { value: String(timeElapsed.minutes).padStart(2, "0"), label: "DAKİKA" },
                 { value: String(timeElapsed.seconds).padStart(2, "0"), label: "SANİYE" },
               ].map((item, i) => (
-                <div key={i} className="bg-black/25 rounded-2xl p-5 md:p-6 text-center border border-white/5">
-                  <div className="text-4xl md:text-5xl lg:text-6xl mb-2" style={{ fontFamily: "'Cinzel', serif" }}>{item.value}</div>
+                <div key={i} className="bg-black/25 rounded-2xl px-4 sm:px-6 md:px-8 py-4 sm:py-5 md:py-6 text-center border border-white/5 min-w-[70px] sm:min-w-[90px]">
+                  <div 
+                    className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl mb-2 font-semibold leading-tight" 
+                    style={{ fontFamily: "'Cinzel', serif" }}
+                  >
+                    {item.value}
+                  </div>
                   <div className="text-white/50 text-[10px] md:text-xs tracking-[0.2em] uppercase">{item.label}</div>
                 </div>
               ))}

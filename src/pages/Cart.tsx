@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Trash2, Plus, Minus, ShoppingBag, ArrowRight, AlertCircle, X, Loader2, Edit, User, Briefcase, Building, Mail, Phone, PawPrint, Heart, Calendar, Palette, Hash, MapPin, Linkedin, Instagram, Globe, FileText } from "lucide-react";
+import { Trash2, Plus, Minus, ShoppingBag, ArrowRight, AlertCircle, X, Loader2, Edit, User, Briefcase, Building, Mail, Phone, PawPrint, Heart, Calendar, Palette, Hash, MapPin, Linkedin, Instagram, Globe, FileText, CheckCircle2 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
