@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { parseDateString } from "@/lib/helpers";
 
 // Types
 interface CoupleData {
@@ -244,7 +245,8 @@ export default function NFCRedirect() {
   // Timer
   useEffect(() => {
     if (!data?.relationshipStartDate) return;
-    const startDate = new Date(data.relationshipStartDate);
+    const startDate = parseDateString(data.relationshipStartDate);
+    if (!startDate) return;
     
     const updateTime = () => {
       const now = new Date();
@@ -433,7 +435,8 @@ export default function NFCRedirect() {
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const date = parseDateString(dateString);
+    if (!date) return dateString;
     const months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
     return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
   };

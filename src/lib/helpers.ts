@@ -141,6 +141,41 @@ export const formatPrice = (price: number): string => {
 };
 
 /**
+ * Tarih string'ini güvenli şekilde Date'e çevirir.
+ * - "YYYY-MM-DD" (DatePicker çıktısı) -> local midnight (timezone kaymasını önler)
+ * - "DD.MM.YYYY" / "DD/MM/YYYY" gibi eski girişleri de destekler
+ * - Geçersizse null döner
+ */
+export const parseDateString = (value: string): Date | null => {
+  if (!value) return null;
+  const v = value.trim();
+
+  // ISO date-only: YYYY-MM-DD
+  let m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const date = new Date(y, mo - 1, d);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  // TR style: DD.MM.YYYY or DD/MM/YYYY
+  m = v.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (m) {
+    const d = Number(m[1]);
+    const mo = Number(m[2]);
+    const y = Number(m[3]);
+    const date = new Date(y, mo - 1, d);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  // Fallback: try native parsing (supports ISO datetime etc.)
+  const date = new Date(v);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+/**
  * Tarihi Türkçe formatında döndürür
  */
 export const formatDate = (
@@ -153,14 +188,18 @@ export const formatDate = (
     day: "numeric",
   };
 
-  return new Date(dateString).toLocaleDateString("tr-TR", options || defaultOptions);
+  const date = parseDateString(dateString);
+  if (!date) return dateString;
+  return date.toLocaleDateString("tr-TR", options || defaultOptions);
 };
 
 /**
  * Tarihi saat ile birlikte Türkçe formatında döndürür
  */
 export const formatDateTime = (dateString: string): string => {
-  return new Date(dateString).toLocaleDateString("tr-TR", {
+  const date = parseDateString(dateString);
+  if (!date) return dateString;
+  return date.toLocaleDateString("tr-TR", {
     year: "numeric",
     month: "long",
     day: "numeric",

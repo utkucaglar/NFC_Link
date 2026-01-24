@@ -2,6 +2,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/helpers";
 
 export interface RedirectData {
   partnerName1: string;
@@ -307,7 +308,7 @@ export function RedirectForm({ data, onChange, errors = {}, onErrorClear }: Redi
 
             {data.relationshipStartDate && (
               <p className="text-xs text-white/70 mt-4">
-                {new Date(data.relationshipStartDate).toLocaleDateString("tr-TR")}'den beri
+                {formatDate(data.relationshipStartDate)}'den beri
               </p>
             )}
           </div>

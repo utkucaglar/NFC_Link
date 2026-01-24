@@ -259,7 +259,7 @@ export default function Orders() {
                                                 // Türkçe etiket mapping
                                                 const labelMap: Record<string, string> = {
                                                   name: 'İsim',
-                                                  title: 'Ünvan',
+                                                  title: 'Unvan',
                                                   company: 'Şirket',
                                                   phone: 'Telefon',
                                                   email: 'E-posta',
@@ -278,15 +278,85 @@ export default function Orders() {
                                                   address: 'Adres',
                                                   healthNotes: 'Sağlık Notları',
                                                   microchipNumber: 'Çip Numarası',
-                                                  partnerName1: 'Partner 1 Adı',
-                                                  partnerName2: 'Partner 2 Adı',
+                                                  partnerName1: '1. Kişi Adı',
+                                                  partnerName2: '2. Kişi Adı',
                                                   relationshipStartDate: 'İlişki Başlangıç Tarihi',
                                                   backgroundImage: 'Arka Plan Görseli',
                                                   subtitle: 'Alt Başlık',
+                                                  originalPrice: 'Orijinal Fiyat',
+                                                  subscriptionFee: 'Abonelik Ücreti',
+                                                  discountPercentage: 'İndirim Oranı (%)',
+                                                  freeSubscriptionMonths: 'Ücretsiz Abonelik (Ay)',
                                                 };
                                                 
                                                 const label = labelMap[key] || key;
-                                                const displayValue = typeof value === 'string' ? value : JSON.stringify(value);
+
+                                                const toNumber = (val: unknown) => {
+                                                  if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+                                                  if (typeof val !== 'string') return null;
+
+                                                  // "850", "850.50", "850,50" gibi girişleri destekle
+                                                  const normalized = val.replace(/\s/g, '').replace(',', '.');
+                                                  const n = Number(normalized);
+                                                  return Number.isFinite(n) ? n : null;
+                                                };
+
+                                                const formatCurrencyTry = (val: unknown) => {
+                                                  const n = toNumber(val);
+                                                  if (n === null) return null;
+                                                  return `₺${n.toLocaleString('tr-TR')}`;
+                                                };
+
+                                                const formatValue = (k: string, v: unknown) => {
+                                                  // Tarih alanları (YYYY-MM-DD -> 10 Nisan 2021)
+                                                  if (k === 'relationshipStartDate' && typeof v === 'string') {
+                                                    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                                                    if (m) {
+                                                      const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+                                                      if (!Number.isNaN(date.getTime())) {
+                                                        return date.toLocaleDateString('tr-TR', {
+                                                          year: 'numeric',
+                                                          month: 'long',
+                                                          day: 'numeric',
+                                                        });
+                                                      }
+                                                    }
+                                                    return v;
+                                                  }
+
+                                                  // Para alanları
+                                                  if (k === 'originalPrice' || k === 'subscriptionFee') {
+                                                    return formatCurrencyTry(v) ?? v;
+                                                  }
+
+                                                  // Yüzde alanı
+                                                  if (k === 'discountPercentage') {
+                                                    const n = toNumber(v);
+                                                    return n === null ? v : `%${n.toLocaleString('tr-TR')}`;
+                                                  }
+
+                                                  // Ay alanı
+                                                  if (k === 'freeSubscriptionMonths') {
+                                                    const n = toNumber(v);
+                                                    return n === null ? v : `${n.toLocaleString('tr-TR')} ay`;
+                                                  }
+
+                                                  // Tema gibi kod değerlerini kullanıcı-dostu gösterelim
+                                                  if (k === 'theme' && typeof v === 'string') {
+                                                    const themeMap: Record<string, string> = {
+                                                      romantic: 'Romantik',
+                                                    };
+                                                    return themeMap[v] || v;
+                                                  }
+
+                                                  return v;
+                                                };
+
+                                                const formattedValue = formatValue(key, value);
+                                                const displayValue =
+                                                  typeof formattedValue === 'string'
+                                                    ? formattedValue
+                                                    : JSON.stringify(formattedValue);
                                                 
                                                 return (
                                                   <p key={key} className="flex items-start gap-2">
