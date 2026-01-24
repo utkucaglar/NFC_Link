@@ -109,7 +109,6 @@ cd /var/www/nfclink/NFC_Link
 ```
 
 **Not:** Eğer script yoksa, aşağıdaki komutları tek tek çalıştırın.
-
 ---
 
 ## 📋 Deployment Checklist
