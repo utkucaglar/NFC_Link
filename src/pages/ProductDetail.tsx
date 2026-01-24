@@ -412,7 +412,8 @@ export default function ProductDetail() {
         `)
         .eq("user_id", user.id)
         .eq("order_items.product_id", product.id)
-        .in("status", ["delivered", "shipped", "confirmed", "pending"]);
+        // Yorum için "ödeme başarısız/pending" siparişleri sayma
+        .in("status", ["delivered", "shipped", "confirmed"]);
 
       console.log("Order check:", { orderData, orderError, productId: product.id, userId: user.id });
 

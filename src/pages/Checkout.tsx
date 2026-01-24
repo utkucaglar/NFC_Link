@@ -491,6 +491,15 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           } else if (status.status === "failed") {
             clearInterval(checkInterval);
             toast.error("Ödeme başarısız oldu");
+            // Callback gecikirse/kullanıcı kapatırsa pending kalmasın
+            try {
+              await supabase
+                .from("orders")
+                .update({ status: "cancelled", updated_at: new Date().toISOString() })
+                .eq("id", orderData.id);
+            } catch (e) {
+              console.warn("Order cancel update failed:", e);
+            }
             setShowPayTRIframe(false);
           }
         } catch (error) {
@@ -1106,6 +1115,16 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                             setShowPayTRIframe(false);
                             setPaymentId(null);
                             setOrderId(null);
+                            // Kullanıcı ödeme ekranını kapattıysa siparişi iptal et
+                            if (orderId) {
+                              supabase
+                                .from("orders")
+                                .update({ status: "cancelled", updated_at: new Date().toISOString() })
+                                .eq("id", orderId)
+                                .then(({ error }) => {
+                                  if (error) console.warn("Order cancel update failed:", error);
+                                });
+                            }
                           }}
                           className="w-full"
                         >

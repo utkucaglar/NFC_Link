@@ -82,6 +82,9 @@ export default function Orders() {
           )
         `)
         .eq("user_id", user?.id)
+        // Ödeme başarısız/pending siparişleri "Siparişlerim"de göstermeyelim
+        // (PayTR'da sipariş kaydı ödeme başlamadan oluşabiliyor)
+        .in("status", ["confirmed", "production", "shipped", "delivered"])
         .order("created_at", { ascending: false });
 
       if (error) throw error;

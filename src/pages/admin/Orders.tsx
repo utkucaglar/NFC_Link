@@ -94,7 +94,9 @@ export default function AdminOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get("status") || "all");
+  // Varsayılan: sadece ödeme sonrası aktif siparişler (pending/cancelled gizli)
+  // URL'de status varsa onu uygula (örn: /admin/orders?status=pending)
+  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get("status") || "active");
   const [expandedOrder, setExpandedOrder] = useState<string | null>(searchParams.get("id") || null);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -345,13 +347,51 @@ export default function AdminOrders() {
     }
   };
 
+  const setStatusFilterWithUrl = (status: string) => {
+    setStatusFilter(status);
+    const next = new URLSearchParams(searchParams);
+    if (status && status !== "active") next.set("status", status);
+    else next.delete("status");
+    // id parametresini koru
+    if (expandedOrder) next.set("id", expandedOrder);
+    setSearchParams(next);
+  };
+
+  const handleHardDeleteOrder = async (orderId: string, orderNumber: string) => {
+    const ok = window.confirm(
+      `Bu sipariş KALICI olarak silinecek ve geri alınamaz:\n\n${orderNumber}\n\nDevam edilsin mi?`
+    );
+    if (!ok) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-delete-order", {
+        body: { order_id: orderId },
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Silme işlemi başarısız");
+
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      if (expandedOrder === orderId) setExpandedOrder(null);
+
+      toast.success("Sipariş kalıcı olarak silindi");
+    } catch (err: any) {
+      console.error("Hard delete order error:", err);
+      toast.error(err?.message || "Sipariş silinemedi");
+    }
+  };
+
   const filteredOrders = orders.filter(order => {
     const matchesSearch = 
       order.order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
       order.user_profiles?.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       `${order.user_profiles?.first_name} ${order.user_profiles?.last_name}`.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesStatus = statusFilter === "all" || order.status === statusFilter;
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "active"
+        ? order.status !== "pending" && order.status !== "cancelled"
+        : order.status === statusFilter);
     
     return matchesSearch && matchesStatus;
   });
@@ -400,9 +440,16 @@ export default function AdminOrders() {
           </div>
           <div className="flex gap-2 flex-wrap">
             <Button
+              variant={statusFilter === "active" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStatusFilterWithUrl("active")}
+            >
+              Aktif
+            </Button>
+            <Button
               variant={statusFilter === "all" ? "default" : "outline"}
               size="sm"
-              onClick={() => setStatusFilter("all")}
+              onClick={() => setStatusFilterWithUrl("all")}
             >
               Tümü
             </Button>
@@ -411,7 +458,7 @@ export default function AdminOrders() {
                 key={key}
                 variant={statusFilter === key ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter(key)}
+                onClick={() => setStatusFilterWithUrl(key)}
               >
                 {config.label}
               </Button>
@@ -498,6 +545,26 @@ export default function AdminOrders() {
                         className="border-t border-border"
                       >
                         <div className="p-4 md:p-6 space-y-6">
+                          {/* Danger Zone */}
+                          <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border border-destructive/30 bg-destructive/5">
+                            <div>
+                              <p className="font-medium text-destructive">Kalıcı Silme</p>
+                              <p className="text-sm text-muted-foreground">
+                                Bu işlem siparişi veritabanından tamamen kaldırır (geri alınamaz).
+                              </p>
+                            </div>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleHardDeleteOrder(order.id, order.order_number);
+                              }}
+                            >
+                              Siparişi Kalıcı Sil
+                            </Button>
+                          </div>
+
                           {/* Customer Info */}
                           <div className="grid md:grid-cols-2 gap-6">
                             <div>
