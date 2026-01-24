@@ -112,6 +112,9 @@ export default function Checkout() {
   // Terms acceptance
   const [termsAccepted, setTermsAccepted] = useState(false);
 
+  // Checkout completed flag - to prevent redirect to cart after clearing
+  const [checkoutCompleted, setCheckoutCompleted] = useState(false);
+
   // Load saved addresses
   useEffect(() => {
     if (user) {
@@ -233,12 +236,12 @@ export default function Checkout() {
     }
   }, [cartTotal]);
 
-  // Redirect if cart is empty
+  // Redirect if cart is empty (but not after successful checkout)
   useEffect(() => {
-    if (cartItems.length === 0) {
+    if (cartItems.length === 0 && !checkoutCompleted) {
       navigate("/cart");
     }
-  }, [cartItems, navigate]);
+  }, [cartItems, navigate, checkoutCompleted]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -621,6 +624,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
               theme: customization.theme || "default",
               subscription_status: "active",
               subscription_end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 gün sonra
+              product_id: item.productId || item.id, // Ürün ID'si - abonelik yenileme için gerekli
             });
           }
         }
@@ -668,6 +672,9 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         ).catch(console.error);
       }
       
+      // Önce checkout tamamlandı flag'ini set et, sonra sepeti temizle
+      // Bu sayede boş sepet kontrolü /cart'a yönlendirmez
+      setCheckoutCompleted(true);
       clearCart();
       localStorage.removeItem("appliedDiscount");
       setShowPayTRIframe(false);

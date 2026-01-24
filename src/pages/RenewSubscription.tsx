@@ -167,11 +167,12 @@ export default function RenewSubscription() {
           productId = productData.id;
         }
       } else {
-        // product_id yoksa, NFC tipine göre ürün ara
+        // product_id yoksa, NFC tipine (nfc_type) göre ürün ara
         const { data: productsData } = await supabase
           .from("products")
           .select("id, name, monthly_subscription_fee")
-          .ilike("name", `%${nfcData.type}%`)
+          .eq("nfc_type", nfcData.type)
+          .eq("is_active", true)
           .limit(1);
 
         if (productsData && productsData.length > 0 && productsData[0].monthly_subscription_fee) {
