@@ -18,6 +18,7 @@ import {
   Upload,
   Trash2,
   Plus,
+  Truck,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,12 @@ interface ShowcaseImage {
   link?: string;
 }
 
+interface ShippingSettings {
+  free_shipping_threshold: number; // Bedava kargo için minimum tutar
+  shipping_cost: number; // Kargo ücreti
+  is_enabled: boolean; // Kargo ücreti sistemi aktif mi
+}
+
 const defaultSmsSettings: SmsSettings = {
   provider: "netgsm",
   api_key: "",
@@ -77,15 +84,23 @@ const defaultSocialSettings: SocialSettings = {
   email_address: "",
 };
 
+const defaultShippingSettings: ShippingSettings = {
+  free_shipping_threshold: 500, // 500 TL üzeri bedava kargo
+  shipping_cost: 50, // 50 TL kargo ücreti
+  is_enabled: true,
+};
+
 export default function AdminSettings() {
   const [smsSettings, setSmsSettings] = useState<SmsSettings>(defaultSmsSettings);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(defaultEmailSettings);
   const [socialSettings, setSocialSettings] = useState<SocialSettings>(defaultSocialSettings);
+  const [shippingSettings, setShippingSettings] = useState<ShippingSettings>(defaultShippingSettings);
   const [showcaseImages, setShowcaseImages] = useState<ShowcaseImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingEmail, setSavingEmail] = useState(false);
   const [savingSocial, setSavingSocial] = useState(false);
+  const [savingShipping, setSavingShipping] = useState(false);
   const [savingShowcase, setSavingShowcase] = useState(false);
   const [uploadingShowcase, setUploadingShowcase] = useState(false);
   const [testPhone, setTestPhone] = useState("");
@@ -145,6 +160,17 @@ export default function AdminSettings() {
 
       if (showcaseData) {
         setShowcaseImages(JSON.parse(showcaseData.value));
+      }
+
+      // Kargo ayarları
+      const { data: shippingData } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "shipping_settings")
+        .single();
+
+      if (shippingData) {
+        setShippingSettings(JSON.parse(shippingData.value));
       }
     } catch (err) {
       console.error("Ayarlar yüklenemedi:", err);
@@ -213,6 +239,27 @@ export default function AdminSettings() {
       toast.error("Ayarlar kaydedilemedi");
     } finally {
       setSavingSocial(false);
+    }
+  };
+
+  const handleSaveShipping = async () => {
+    setSavingShipping(true);
+    try {
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert({
+          key: "shipping_settings",
+          value: JSON.stringify(shippingSettings),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "key" });
+
+      if (error) throw error;
+      toast.success("Kargo ayarları kaydedildi");
+    } catch (err) {
+      console.error("Kaydetme hatası:", err);
+      toast.error("Ayarlar kaydedilemedi");
+    } finally {
+      setSavingShipping(false);
     }
   };
 
@@ -458,6 +505,130 @@ export default function AdminSettings() {
                 <>
                   <Save className="w-4 h-4 mr-2" />
                   Sosyal Medya Ayarlarını Kaydet
+                </>
+              )}
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Shipping Settings Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12 }}
+          className="bg-card rounded-2xl p-6 shadow-card border border-border/50"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+              <Truck className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Kargo Ayarları</h2>
+              <p className="text-sm text-muted-foreground">
+                Bedava kargo limiti ve kargo ücreti
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Enable/Disable */}
+            <div className="flex items-center justify-between p-4 bg-blue-500/10 rounded-lg border border-blue-500/20">
+              <div>
+                <p className="font-medium">Kargo Ücreti Sistemi</p>
+                <p className="text-sm text-muted-foreground">
+                  Devre dışı bırakılırsa tüm siparişler bedava kargo olur
+                </p>
+              </div>
+              <Switch
+                checked={shippingSettings.is_enabled}
+                onCheckedChange={(checked) =>
+                  setShippingSettings({ ...shippingSettings, is_enabled: checked })
+                }
+              />
+            </div>
+
+            {shippingSettings.is_enabled && (
+              <>
+                {/* Free Shipping Threshold */}
+                <div>
+                  <Label htmlFor="free_shipping_threshold">
+                    Bedava Kargo Minimum Tutarı (₺)
+                  </Label>
+                  <Input
+                    id="free_shipping_threshold"
+                    type="number"
+                    min="0"
+                    step="10"
+                    value={shippingSettings.free_shipping_threshold}
+                    onChange={(e) =>
+                      setShippingSettings({
+                        ...shippingSettings,
+                        free_shipping_threshold: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    className="mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Bu tutarın üzerindeki siparişlerde kargo ücretsiz olur. 0 girilirse her zaman ücretli olur.
+                  </p>
+                </div>
+
+                {/* Shipping Cost */}
+                <div>
+                  <Label htmlFor="shipping_cost">
+                    Kargo Ücreti (₺)
+                  </Label>
+                  <Input
+                    id="shipping_cost"
+                    type="number"
+                    min="0"
+                    step="5"
+                    value={shippingSettings.shipping_cost}
+                    onChange={(e) =>
+                      setShippingSettings({
+                        ...shippingSettings,
+                        shipping_cost: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    className="mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Minimum tutarın altındaki siparişler için uygulanacak kargo ücreti
+                  </p>
+                </div>
+
+                {/* Preview */}
+                <div className="bg-muted/30 rounded-lg p-4 border border-border">
+                  <p className="text-sm font-medium mb-2">Önizleme:</p>
+                  <p className="text-sm text-muted-foreground">
+                    • ₺{shippingSettings.free_shipping_threshold} ve üzeri siparişlerde: <span className="text-green-600 font-medium">Ücretsiz Kargo</span>
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    • ₺{shippingSettings.free_shipping_threshold} altı siparişlerde: <span className="text-primary font-medium">₺{shippingSettings.shipping_cost} Kargo Ücreti</span>
+                  </p>
+                </div>
+              </>
+            )}
+
+            {!shippingSettings.is_enabled && (
+              <div className="bg-green-500/10 rounded-lg p-4 border border-green-500/20">
+                <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                  Kargo ücreti sistemi kapalı - Tüm siparişler bedava kargo ile gönderilir
+                </p>
+              </div>
+            )}
+
+            {/* Save Button */}
+            <Button onClick={handleSaveShipping} disabled={savingShipping} className="w-full">
+              {savingShipping ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Kaydediliyor...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Kargo Ayarlarını Kaydet
                 </>
               )}
             </Button>

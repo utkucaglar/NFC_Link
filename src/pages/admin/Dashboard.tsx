@@ -10,7 +10,6 @@ import {
   Clock,
   CheckCircle2,
   Truck,
-  Tag,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -22,7 +21,6 @@ interface DashboardStats {
   totalOrders: number;
   pendingOrders: number;
   totalProducts: number;
-  activeDiscounts: number;
   totalRevenue: number;
 }
 
@@ -53,7 +51,6 @@ export default function AdminDashboard() {
     totalOrders: 0,
     pendingOrders: 0,
     totalProducts: 0,
-    activeDiscounts: 0,
     totalRevenue: 0,
   });
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
@@ -79,12 +76,6 @@ export default function AdminDashboard() {
         .select("*", { count: "exact", head: true })
         .eq("is_active", true);
 
-      // Aktif indirimleri say
-      const { count: discountsCount } = await supabase
-        .from("discounts")
-        .select("*", { count: "exact", head: true })
-        .eq("is_active", true);
-
       const totalOrders = orders?.length || 0;
       const pendingOrders = orders?.filter((o) => o.status === "pending").length || 0;
       const totalRevenue = orders?.reduce((sum, o) => sum + (o.total || 0), 0) || 0;
@@ -93,7 +84,6 @@ export default function AdminDashboard() {
         totalOrders,
         pendingOrders,
         totalProducts: productsCount || 0,
-        activeDiscounts: discountsCount || 0,
         totalRevenue,
       });
 
@@ -254,15 +244,6 @@ export default function AdminDashboard() {
               <h3 className="font-semibold mb-1">Yeni Ürün Ekle</h3>
               <p className="text-sm text-muted-foreground">
                 Mağazaya yeni ürün ekleyin
-              </p>
-            </div>
-          </Link>
-          <Link to="/admin/discounts">
-            <div className="bg-card rounded-2xl p-6 shadow-card border border-border/50 hover:shadow-lg transition-all hover:-translate-y-1 cursor-pointer">
-              <Tag className="w-8 h-8 text-secondary mb-4" />
-              <h3 className="font-semibold mb-1">İndirim Oluştur</h3>
-              <p className="text-sm text-muted-foreground">
-                Yeni indirim kodu oluşturun
               </p>
             </div>
           </Link>

@@ -12,10 +12,9 @@ import {
   User,
   Building,
   Check,
+  CheckCircle2,
   Loader2,
-  Tag,
-  X,
-  CheckCircle2
+  X
 } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -67,12 +66,26 @@ const generateUniqueKey = (): string => {
   return key;
 };
 
+// Kargo ayarları interface
+interface ShippingSettings {
+  free_shipping_threshold: number;
+  shipping_cost: number;
+  is_enabled: boolean;
+}
+
+const defaultShippingSettings: ShippingSettings = {
+  free_shipping_threshold: 500,
+  shipping_cost: 50,
+  is_enabled: true,
+};
+
 export default function Checkout() {
   const navigate = useNavigate();
   const { cartItems, cartTotal, clearCart } = useCart();
   const { user, profile, isAuthenticated } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [shippingSettings, setShippingSettings] = useState<ShippingSettings>(defaultShippingSettings);
   const [formData, setFormData] = useState<ShippingFormData>({
     firstName: "",
     lastName: "",
@@ -85,18 +98,6 @@ export default function Checkout() {
     notes: ""
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
-
-  // Discount state
-  const [discountCode, setDiscountCode] = useState("");
-  const [discountLoading, setDiscountLoading] = useState(false);
-  const [appliedDiscount, setAppliedDiscount] = useState<{
-    id: string;
-    code: string;
-    discount_type: "percentage" | "fixed";
-    discount_value: number;
-    discountAmount: number;
-  } | null>(null);
-  const [discountError, setDiscountError] = useState("");
 
   // Saved addresses
   const [savedAddresses, setSavedAddresses] = useState<ShippingAddress[]>([]);
@@ -121,6 +122,37 @@ export default function Checkout() {
       fetchSavedAddresses();
     }
   }, [user]);
+
+  // Kargo ayarlarını yükle
+  useEffect(() => {
+    const fetchShippingSettings = async () => {
+      try {
+        const { data } = await supabase
+          .from("site_settings")
+          .select("value")
+          .eq("key", "shipping_settings")
+          .single();
+
+        if (data) {
+          setShippingSettings(JSON.parse(data.value));
+        }
+      } catch (err) {
+        console.error("Kargo ayarları yüklenemedi:", err);
+      }
+    };
+
+    fetchShippingSettings();
+  }, []);
+
+  // Kargo ücretini hesapla
+  const calculateShipping = (): number => {
+    if (!shippingSettings.is_enabled) return 0;
+    if (cartTotal >= shippingSettings.free_shipping_threshold) return 0;
+    return shippingSettings.shipping_cost;
+  };
+
+  const shippingCost = calculateShipping();
+  const isFreeShipping = shippingCost === 0;
 
   // Pre-fill form with user profile data
   useEffect(() => {
@@ -207,35 +239,6 @@ export default function Checkout() {
     }
   };
 
-  // Load discount from localStorage (if applied in Cart)
-  useEffect(() => {
-    const savedDiscount = localStorage.getItem("appliedDiscount");
-    if (savedDiscount) {
-      try {
-        const discount = JSON.parse(savedDiscount);
-        // Recalculate discount amount based on current cart total
-        let calculatedDiscount = 0;
-        if (discount.discount_type === "percentage") {
-          calculatedDiscount = (cartTotal * discount.discount_value) / 100;
-          if (discount.max_discount_amount && calculatedDiscount > discount.max_discount_amount) {
-            calculatedDiscount = discount.max_discount_amount;
-          }
-        } else {
-          calculatedDiscount = discount.discount_value;
-        }
-        calculatedDiscount = Math.min(calculatedDiscount, cartTotal);
-        
-        setAppliedDiscount({
-          ...discount,
-          discountAmount: calculatedDiscount,
-        });
-        setDiscountCode(discount.code);
-      } catch (e) {
-        localStorage.removeItem("appliedDiscount");
-      }
-    }
-  }, [cartTotal]);
-
   // Redirect if cart is empty (but not after successful checkout)
   useEffect(() => {
     if (cartItems.length === 0 && !checkoutCompleted) {
@@ -245,11 +248,12 @@ export default function Checkout() {
 
   // Redirect to login if not authenticated
   useEffect(() => {
-    if (!isAuthenticated()) {
+    // Yalnızca auth durumu kontrol edildiğinde yönlendir
+    if (user === null && !loading) {
       toast.error("Ödeme yapmak için giriş yapmalısınız");
-      navigate("/login");
+      navigate("/login?redirect=/checkout");
     }
-  }, [isAuthenticated, navigate]);
+  }, [user, loading, navigate]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -353,11 +357,10 @@ export default function Checkout() {
         return;
       }
 
-      // Calculate totals
+      // Calculate totals (indirimler artık ürün bazlı, sepette uygulanmış durumda)
       const subtotal = cartTotal;
-      const shipping = 0; // Ücretsiz kargo
-      const discountAmount = appliedDiscount?.discountAmount || 0;
-      const total = Math.max(0, subtotal + shipping - discountAmount);
+      const shipping = shippingCost; // Kargo ücreti (ayarlara göre)
+      const total = subtotal + shipping;
       
       // Sipariş numarası oluştur (PayTR sadece alfanumerik kabul eder, tire yok)
       const orderNumber = `NFC${new Date().getFullYear()}${Date.now().toString().slice(-8)}`;
@@ -524,20 +527,6 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
     try {
       setLoading(true);
 
-      // İndirim kullanımını kaydet
-      if (appliedDiscount && user) {
-        // discount_usages tablosuna kaydet
-        await supabase.from("discount_usages").insert({
-          discount_id: appliedDiscount.id,
-          user_id: user.id,
-          order_id: orderId,
-          discount_amount: appliedDiscount.discountAmount,
-        });
-
-        // usage_count'u artır
-        await supabase.rpc("increment_discount_usage", { discount_id: appliedDiscount.id });
-      }
-
       // Sipariş kalemlerini kaydet
       const orderItems = cartItems.map(item => ({
         order_id: orderId,
@@ -676,7 +665,6 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       // Bu sayede boş sepet kontrolü /cart'a yönlendirmez
       setCheckoutCompleted(true);
       clearCart();
-      localStorage.removeItem("appliedDiscount");
       setShowPayTRIframe(false);
       navigate("/orders");
       
@@ -688,120 +676,37 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
     }
   };
 
-  // Calculate totals for display
+  // Calculate totals for display (indirimler artık ürün bazlı, sepette uygulanmış durumda)
   const subtotal = cartTotal;
-  const shipping = 0; // Ücretsiz kargo
-  const discountAmount = appliedDiscount?.discountAmount || 0;
-  const total = Math.max(0, subtotal + shipping - discountAmount);
+  const shipping = shippingCost; // Kargo ücreti (ayarlara göre)
+  const total = subtotal + shipping;
 
-  // İndirim kodu uygula
-  const handleApplyDiscount = async () => {
-    if (!discountCode.trim()) {
-      setDiscountError("İndirim kodu giriniz");
-      return;
-    }
+  // Kullanıcı yükleniyor veya oturum açılmamışsa
+  if (!user && !checkoutCompleted) {
+    return (
+      <Layout>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+            <p className="text-muted-foreground">Yükleniyor...</p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
-    setDiscountLoading(true);
-    setDiscountError("");
-
-    try {
-      // İndirim kodunu kontrol et
-      const { data: discount, error } = await supabase
-        .from("discounts")
-        .select("*")
-        .eq("code", toUpperCaseTurkish(discountCode.trim()))
-        .eq("is_active", true)
-        .single();
-
-      if (error || !discount) {
-        setDiscountError("Geçersiz indirim kodu");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Tarih kontrolü
-      const now = new Date();
-      if (discount.starts_at && new Date(discount.starts_at) > now) {
-        setDiscountError("Bu indirim kodu henüz aktif değil");
-        setDiscountLoading(false);
-        return;
-      }
-      if (discount.expires_at && new Date(discount.expires_at) < now) {
-        setDiscountError("Bu indirim kodunun süresi dolmuş");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Kullanım limiti kontrolü
-      if (discount.usage_limit && discount.usage_count >= discount.usage_limit) {
-        setDiscountError("Bu indirim kodu kullanım limitine ulaşmış");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Minimum tutar kontrolü
-      if (discount.min_order_amount && subtotal < discount.min_order_amount) {
-        setDiscountError(`Minimum sipariş tutarı: ₺${discount.min_order_amount}`);
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Kullanıcı başına kullanım kontrolü
-      if (user && discount.per_user_limit) {
-        const { count } = await supabase
-          .from("discount_usages")
-          .select("*", { count: "exact", head: true })
-          .eq("discount_id", discount.id)
-          .eq("user_id", user.id);
-
-        if (count && count >= discount.per_user_limit) {
-          setDiscountError("Bu indirim kodunu daha önce kullandınız");
-          setDiscountLoading(false);
-          return;
-        }
-      }
-
-      // İndirim miktarını hesapla
-      let calculatedDiscount = 0;
-      if (discount.discount_type === "percentage") {
-        calculatedDiscount = (subtotal * discount.discount_value) / 100;
-        // Max indirim limiti kontrolü
-        if (discount.max_discount_amount && calculatedDiscount > discount.max_discount_amount) {
-          calculatedDiscount = discount.max_discount_amount;
-        }
-      } else {
-        calculatedDiscount = discount.discount_value;
-      }
-
-      // İndirim tutarı sipariş tutarını geçemez
-      calculatedDiscount = Math.min(calculatedDiscount, subtotal);
-
-      setAppliedDiscount({
-        id: discount.id,
-        code: discount.code,
-        discount_type: discount.discount_type,
-        discount_value: discount.discount_value,
-        discountAmount: calculatedDiscount,
-      });
-
-      toast.success(`İndirim kodu uygulandı: ₺${calculatedDiscount.toFixed(2)} indirim`);
-    } catch (err) {
-      console.error("İndirim kodu hatası:", err);
-      setDiscountError("İndirim kodu uygulanamadı");
-    } finally {
-      setDiscountLoading(false);
-    }
-  };
-
-  // İndirim kodunu kaldır
-  const handleRemoveDiscount = () => {
-    setAppliedDiscount(null);
-    setDiscountCode("");
-    setDiscountError("");
-  };
-
-  if (cartItems.length === 0) {
-    return null;
+  // Sepet boşsa ve ödeme tamamlanmamışsa
+  if (cartItems.length === 0 && !checkoutCompleted) {
+    return (
+      <Layout>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+            <p className="text-muted-foreground">Sepete yönlendiriliyorsunuz...</p>
+          </div>
+        </div>
+      </Layout>
+    );
   }
 
   return (
@@ -1265,79 +1170,38 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                 <div className="space-y-4 mb-6 max-h-60 overflow-y-auto">
                   {cartItems.map((item) => (
                     <div key={item.id} className="flex gap-3">
-                      <div className="w-16 h-16 bg-muted/30 rounded-lg flex items-center justify-center shrink-0">
+                      <div className="w-16 h-16 bg-muted/30 rounded-lg flex items-center justify-center shrink-0 relative">
                         <img 
                           src={item.image} 
                           alt={item.name}
                           className="w-12 h-12 object-contain"
                         />
+                        {/* İndirim Badge */}
+                        {item.customization?.discountPercentage && (
+                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            %{item.customization.discountPercentage}
+                          </span>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{item.name}</p>
                         <p className="text-xs text-muted-foreground">Adet: {item.quantity}</p>
-                        <p className="text-sm font-semibold text-gradient">₺{item.price * item.quantity}</p>
+                        {/* İndirimli fiyat gösterimi */}
+                        {item.customization?.originalPrice && item.customization?.discountPercentage ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-muted-foreground line-through">
+                              ₺{item.customization.originalPrice * item.quantity}
+                            </span>
+                            <span className="text-sm font-semibold text-red-500">
+                              ₺{item.price * item.quantity}
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-sm font-semibold text-gradient">₺{item.price * item.quantity}</p>
+                        )}
                       </div>
                     </div>
                   ))}
-                </div>
-
-                {/* Discount Code */}
-                <div className="border-t border-border pt-4 mb-4">
-                  <Label className="text-sm font-medium mb-2 block">İndirim Kodu</Label>
-                  {appliedDiscount ? (
-                    <div className="flex items-center justify-between bg-accent/10 border border-accent/30 rounded-lg p-3">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-accent" />
-                        <span className="text-sm font-medium">{appliedDiscount.code}</span>
-                        <span className="text-xs text-accent">
-                          (-₺{appliedDiscount.discountAmount.toFixed(2)})
-                        </span>
-                      </div>
-                      <button
-                        onClick={handleRemoveDiscount}
-                        className="text-muted-foreground hover:text-destructive transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                          <Input
-                            value={discountCode}
-                            onChange={(e) => {
-                              setDiscountCode(toUpperCaseTurkish(e.target.value));
-                              setDiscountError("");
-                            }}
-                            placeholder="Kod girin"
-                            className="pl-10 uppercase"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleApplyDiscount();
-                              }
-                            }}
-                          />
-                        </div>
-                        <Button
-                          variant="outline"
-                          onClick={handleApplyDiscount}
-                          disabled={discountLoading}
-                        >
-                          {discountLoading ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            "Uygula"
-                          )}
-                        </Button>
-                      </div>
-                      {discountError && (
-                        <p className="text-xs text-destructive">{discountError}</p>
-                      )}
-                    </div>
-                  )}
                 </div>
 
                 <div className="border-t border-border pt-4 space-y-3">
@@ -1345,29 +1209,20 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     <span className="text-muted-foreground">Ara Toplam</span>
                     <span>₺{subtotal}</span>
                   </div>
-                  {appliedDiscount && (
-                    <div className="flex justify-between text-sm text-accent">
-                      <span>İndirim ({appliedDiscount.code})</span>
-                      <span>-₺{appliedDiscount.discountAmount.toFixed(2)}</span>
-                    </div>
-                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Kargo</span>
-                    <span className="text-accent">Ücretsiz</span>
+                    {isFreeShipping ? (
+                      <span className="text-accent">Ücretsiz</span>
+                    ) : (
+                      <span>₺{shippingCost}</span>
+                    )}
                   </div>
                 </div>
 
                 <div className="border-t border-border mt-4 pt-4">
                   <div className="flex justify-between items-center">
                     <span className="font-semibold">Toplam</span>
-                    <div className="text-right">
-                      {appliedDiscount && (
-                        <span className="text-sm text-muted-foreground line-through mr-2">
-                          ₺{subtotal}
-                        </span>
-                      )}
-                      <span className="text-2xl font-bold text-gradient">₺{total}</span>
-                    </div>
+                    <span className="text-2xl font-bold text-gradient">₺{total}</span>
                   </div>
                 </div>
 

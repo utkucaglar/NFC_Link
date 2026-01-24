@@ -77,9 +77,38 @@ interface Product {
   category: string;
   image_url: string | null;
   monthly_subscription_fee: number;
+  free_subscription_months: number;
   nfc_type: string | null;
   has_subscription?: boolean;
+  // İndirim alanları
+  discount_percentage: number;
+  is_discounted: boolean;
+  discount_start_date: string | null;
+  discount_end_date: string | null;
 }
+
+// İndirim aktif mi kontrol eden yardımcı fonksiyon
+const isDiscountActive = (product: Product): boolean => {
+  if (!product.is_discounted || !product.discount_percentage || product.discount_percentage <= 0) {
+    return false;
+  }
+  const now = new Date();
+  if (product.discount_start_date && new Date(product.discount_start_date) > now) {
+    return false;
+  }
+  if (product.discount_end_date && new Date(product.discount_end_date) < now) {
+    return false;
+  }
+  return true;
+};
+
+// İndirimli fiyatı hesaplayan yardımcı fonksiyon
+const getDiscountedPrice = (product: Product): number => {
+  if (!isDiscountActive(product)) {
+    return product.price;
+  }
+  return Math.round(product.price * (1 - product.discount_percentage / 100));
+};
 
 export default function Index() {
   const navigate = useNavigate();
@@ -98,14 +127,23 @@ export default function Index() {
       navigate(`/product/${product.id}`);
       toast.info("Bu ürün için bilgilerinizi girmeniz gerekiyor");
     } else {
-      const totalPrice = hasSub(product) ? product.price + (product.monthly_subscription_fee || 29) : product.price;
+      // İndirimli fiyatı kullan
+      const finalPrice = getDiscountedPrice(product);
       const customization: Record<string, unknown> = {};
-      if (hasSub(product)) customization.subscriptionFee = product.monthly_subscription_fee || 29;
+      if (hasSub(product)) {
+        customization.subscriptionFee = product.monthly_subscription_fee || 29;
+        customization.freeSubscriptionMonths = product.free_subscription_months || 1;
+      }
+      // İndirim bilgisini de ekle
+      if (isDiscountActive(product)) {
+        customization.originalPrice = product.price;
+        customization.discountPercentage = product.discount_percentage;
+      }
       addToCart({
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: totalPrice,
+        price: finalPrice,
         image: getProductImage(product.image_url, product.category),
         customization,
       });
@@ -117,7 +155,7 @@ export default function Index() {
       try {
         const { data, error } = await supabase
           .from('products')
-          .select('id, name, price, category, image_url, monthly_subscription_fee, nfc_type, has_subscription')
+          .select('id, name, price, category, image_url, monthly_subscription_fee, free_subscription_months, nfc_type, has_subscription, discount_percentage, is_discounted, discount_start_date, discount_end_date')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .limit(3);
@@ -326,7 +364,7 @@ export default function Index() {
                   transition={{ delay: index * 0.1 }}
                   className="group bg-background rounded-2xl overflow-hidden shadow-card hover:shadow-xl transition-all duration-300"
                 >
-                  <Link to={`/product/${product.id}`} className="block">
+                  <Link to={`/product/${product.id}`} className="block relative">
                     <div className="aspect-square p-8 bg-muted/30 flex items-center justify-center overflow-hidden">
                       <img 
                         src={getProductImage(product.image_url, product.category)} 
@@ -334,6 +372,14 @@ export default function Index() {
                         className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
                       />
                     </div>
+                    {/* İndirim Badge */}
+                    {isDiscountActive(product) && (
+                      <div className="absolute top-3 left-3">
+                        <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-lg shadow-lg">
+                          %{product.discount_percentage} İNDİRİM
+                        </span>
+                      </div>
+                    )}
                   </Link>
                   <div className="p-6">
                     <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
@@ -343,9 +389,28 @@ export default function Index() {
                       <h3 className="text-lg font-semibold mt-3 mb-2 hover:text-primary transition-colors">{product.name}</h3>
                     </Link>
                     <div className="flex items-center justify-between">
-                      <span className="text-2xl font-bold text-gradient">
-                        ₺{(hasSub(product) ? product.price + (product.monthly_subscription_fee || 29) : product.price).toFixed(0)}
-                      </span>
+                      <div>
+                        {/* Fiyat Gösterimi - İndirimli veya Normal */}
+                        {isDiscountActive(product) ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg text-muted-foreground line-through">
+                              ₺{product.price.toFixed(0)}
+                            </span>
+                            <span className="text-2xl font-bold text-red-500">
+                              ₺{getDiscountedPrice(product)}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-2xl font-bold text-gradient">
+                            ₺{product.price.toFixed(0)}
+                          </span>
+                        )}
+                        {hasSub(product) && (
+                          <p className="text-xs text-green-600 font-medium">
+                            +{product.free_subscription_months || 1} ay bedava abonelik
+                          </p>
+                        )}
+                      </div>
                       <Button 
                         size="sm"
                         onClick={() => handleAddToCart(product)}
@@ -416,8 +481,8 @@ export default function Index() {
                 <Zap className="w-6 h-6 text-secondary" />
               </div>
               <div>
-                <h3 className="font-semibold mb-1">Ücretsiz Deneme</h3>
-                <p className="text-sm text-muted-foreground">İlk 3 ay tamamen ücretsiz</p>
+                <h3 className="font-semibold mb-1">Bedava Abonelik</h3>
+                <p className="text-sm text-muted-foreground">Ürüne göre bedava abonelik süresi</p>
               </div>
             </motion.div>
           </div>

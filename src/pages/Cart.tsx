@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Trash2, Plus, Minus, ShoppingBag, ArrowRight, AlertCircle, Tag, X, CheckCircle2, Loader2, Edit, User, Briefcase, Building, Mail, Phone, PawPrint, Heart, Calendar, Palette, Hash, MapPin, Linkedin, Instagram, Globe, FileText } from "lucide-react";
+import { Trash2, Plus, Minus, ShoppingBag, ArrowRight, AlertCircle, X, Loader2, Edit, User, Briefcase, Building, Mail, Phone, PawPrint, Heart, Calendar, Palette, Hash, MapPin, Linkedin, Instagram, Globe, FileText } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -18,20 +18,26 @@ import { getProductImageByColor, DEFAULT_COLORS, toUpperCaseTurkish } from "@/li
 // Kişiselleştirme gerektiren NFC tipleri
 const CUSTOMIZATION_NFC_TYPES = ["business-card", "pet-id", "redirect"];
 
+// Kargo ayarları interface
+interface ShippingSettings {
+  free_shipping_threshold: number;
+  shipping_cost: number;
+  is_enabled: boolean;
+}
+
+const defaultShippingSettings: ShippingSettings = {
+  free_shipping_threshold: 500,
+  shipping_cost: 50,
+  is_enabled: true,
+};
+
 export default function Cart() {
   const { cartItems, updateQuantity, removeFromCart, updateCustomization, updateItemImage, cartTotal } = useCart();
   const { user } = useAuth();
-  const [couponCode, setCouponCode] = useState("");
-  const [discountLoading, setDiscountLoading] = useState(false);
-  const [appliedDiscount, setAppliedDiscount] = useState<{
-    id: string;
-    code: string;
-    discount_type: "percentage" | "fixed";
-    discount_value: number;
-    discountAmount: number;
-  } | null>(null);
-  const [discountError, setDiscountError] = useState("");
   const navigate = useNavigate();
+
+  // Kargo ayarları state
+  const [shippingSettings, setShippingSettings] = useState<ShippingSettings>(defaultShippingSettings);
 
   // Edit customization state
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
@@ -52,6 +58,37 @@ export default function Cart() {
     const nfcType = item.customization?.nfcType || item.customization?.type;
     return CUSTOMIZATION_NFC_TYPES.includes(nfcType);
   };
+
+  // Kargo ayarlarını yükle
+  useEffect(() => {
+    const fetchShippingSettings = async () => {
+      try {
+        const { data } = await supabase
+          .from("site_settings")
+          .select("value")
+          .eq("key", "shipping_settings")
+          .single();
+
+        if (data) {
+          setShippingSettings(JSON.parse(data.value));
+        }
+      } catch (err) {
+        console.error("Kargo ayarları yüklenemedi:", err);
+      }
+    };
+
+    fetchShippingSettings();
+  }, []);
+
+  // Kargo ücretini hesapla
+  const calculateShipping = (): number => {
+    if (!shippingSettings.is_enabled) return 0;
+    if (cartTotal >= shippingSettings.free_shipping_threshold) return 0;
+    return shippingSettings.shipping_cost;
+  };
+
+  const shippingCost = calculateShipping();
+  const isFreeShipping = shippingCost === 0;
 
   // Ürün verilerini yükle (renkler için)
   useEffect(() => {
@@ -525,120 +562,6 @@ export default function Cart() {
     removeFromCart(id);
   };
 
-  const handleApplyCoupon = async () => {
-    if (!couponCode.trim()) {
-      setDiscountError("İndirim kodu giriniz");
-      return;
-    }
-
-    setDiscountLoading(true);
-    setDiscountError("");
-
-    try {
-      // İndirim kodunu kontrol et
-      const { data: discount, error } = await supabase
-        .from("discounts")
-        .select("*")
-        .eq("code", toUpperCaseTurkish(couponCode.trim()))
-        .eq("is_active", true)
-        .single();
-
-      if (error || !discount) {
-        setDiscountError("Geçersiz indirim kodu");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Tarih kontrolü
-      const now = new Date();
-      if (discount.starts_at && new Date(discount.starts_at) > now) {
-        setDiscountError("Bu indirim kodu henüz aktif değil");
-        setDiscountLoading(false);
-        return;
-      }
-      if (discount.expires_at && new Date(discount.expires_at) < now) {
-        setDiscountError("Bu indirim kodunun süresi dolmuş");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Kullanım limiti kontrolü
-      if (discount.usage_limit && discount.usage_count >= discount.usage_limit) {
-        setDiscountError("Bu indirim kodu kullanım limitine ulaşmış");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Minimum tutar kontrolü
-      if (discount.min_order_amount && subtotal < discount.min_order_amount) {
-        setDiscountError(`Minimum sipariş tutarı: ₺${discount.min_order_amount}`);
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Kullanıcı başına kullanım kontrolü
-      if (user && discount.per_user_limit) {
-        const { count } = await supabase
-          .from("discount_usages")
-          .select("*", { count: "exact", head: true })
-          .eq("discount_id", discount.id)
-          .eq("user_id", user.id);
-
-        if (count && count >= discount.per_user_limit) {
-          setDiscountError("Bu indirim kodunu daha önce kullandınız");
-          setDiscountLoading(false);
-          return;
-        }
-      }
-
-      // İndirim miktarını hesapla
-      let calculatedDiscount = 0;
-      if (discount.discount_type === "percentage") {
-        calculatedDiscount = (subtotal * discount.discount_value) / 100;
-        // Max indirim limiti kontrolü
-        if (discount.max_discount_amount && calculatedDiscount > discount.max_discount_amount) {
-          calculatedDiscount = discount.max_discount_amount;
-        }
-      } else {
-        calculatedDiscount = discount.discount_value;
-      }
-
-      // İndirim tutarı sipariş tutarını geçemez
-      calculatedDiscount = Math.min(calculatedDiscount, subtotal);
-
-      setAppliedDiscount({
-        id: discount.id,
-        code: discount.code,
-        discount_type: discount.discount_type,
-        discount_value: discount.discount_value,
-        discountAmount: calculatedDiscount,
-      });
-
-      // İndirim bilgisini localStorage'a kaydet (checkout'ta kullanmak için)
-      localStorage.setItem("appliedDiscount", JSON.stringify({
-        id: discount.id,
-        code: discount.code,
-        discount_type: discount.discount_type,
-        discount_value: discount.discount_value,
-        discountAmount: calculatedDiscount,
-      }));
-
-      toast.success(`İndirim kodu uygulandı: ₺${calculatedDiscount.toFixed(2)} indirim`);
-    } catch (err) {
-      console.error("İndirim kodu hatası:", err);
-      setDiscountError("İndirim kodu uygulanamadı");
-    } finally {
-      setDiscountLoading(false);
-    }
-  };
-
-  const handleRemoveDiscount = () => {
-    setAppliedDiscount(null);
-    setCouponCode("");
-    setDiscountError("");
-    localStorage.removeItem("appliedDiscount");
-  };
-
   const handleCheckout = () => {
     if (cartItems.length === 0) {
       toast.error("Sepetiniz boş");
@@ -821,8 +744,7 @@ export default function Cart() {
   };
 
   const subtotal = cartTotal;
-  const discountAmount = appliedDiscount?.discountAmount || 0;
-  const total = Math.max(0, subtotal - discountAmount);
+  const total = subtotal + shippingCost; // Kargo dahil toplam
 
   return (
     <Layout>
@@ -857,13 +779,19 @@ export default function Cart() {
                       {/* Image */}
                       <Link 
                         to={`/product/${item.productId || item.id}`} 
-                        className="w-full sm:w-28 h-28 md:w-32 md:h-32 bg-muted/30 rounded-xl flex items-center justify-center shrink-0 hover:bg-muted/50 transition-colors overflow-hidden group"
+                        className="w-full sm:w-28 h-28 md:w-32 md:h-32 bg-muted/30 rounded-xl flex items-center justify-center shrink-0 hover:bg-muted/50 transition-colors overflow-hidden group relative"
                       >
                         <img
                           src={item.image}
                           alt={item.name}
                           className="w-20 h-20 md:w-24 md:h-24 object-contain group-hover:scale-110 transition-transform duration-300"
                         />
+                        {/* İndirim Badge */}
+                        {item.customization?.discountPercentage && (
+                          <span className="absolute top-1 left-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow">
+                            %{item.customization.discountPercentage}
+                          </span>
+                        )}
                       </Link>
 
                       {/* Details */}
@@ -903,14 +831,40 @@ export default function Cart() {
 
                         {/* Fiyat */}
                         <div className="mt-3 pt-3 border-t border-border/50">
-                          <p className="text-xl font-bold text-gradient">
-                            ₺{Math.round(item.price)}
-                            {item.customization?.subscriptionFee != null ? (
-                              <span className="text-sm font-normal text-muted-foreground"> (1 ay abonelik dahil)</span>
-                            ) : (
-                              <span className="text-sm font-normal text-muted-foreground"> (Abonelik yok)</span>
-                            )}
-                          </p>
+                          {/* İndirimli fiyat gösterimi */}
+                          {item.customization?.originalPrice && item.customization?.discountPercentage ? (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded">
+                                  %{item.customization.discountPercentage} İNDİRİM
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-base text-muted-foreground line-through">
+                                  ₺{Math.round(item.customization.originalPrice)}
+                                </span>
+                                <span className="text-xl font-bold text-red-500">
+                                  ₺{Math.round(item.price)}
+                                </span>
+                              </div>
+                              {item.customization?.subscriptionFee != null ? (
+                                <p className="text-sm text-muted-foreground">
+                                  +{item.customization?.freeSubscriptionMonths || 1} ay bedava abonelik
+                                </p>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">Abonelik yok</p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xl font-bold text-gradient">
+                              ₺{Math.round(item.price)}
+                              {item.customization?.subscriptionFee != null ? (
+                                <span className="text-sm font-normal text-muted-foreground"> (+{item.customization?.freeSubscriptionMonths || 1} ay bedava abonelik)</span>
+                              ) : (
+                                <span className="text-sm font-normal text-muted-foreground"> (Abonelik yok)</span>
+                              )}
+                            </p>
+                          )}
                         </div>
 
                         {/* Bilgilendirme ve Düzenle butonu */}
@@ -998,87 +952,31 @@ export default function Cart() {
                       <span className="text-muted-foreground">Ürünler</span>
                       <span>₺{subtotal}</span>
                     </div>
-                    {appliedDiscount && (
-                      <div className="flex justify-between text-sm text-accent">
-                        <span>İndirim ({appliedDiscount.code})</span>
-                        <span>-₺{appliedDiscount.discountAmount.toFixed(2)}</span>
-                      </div>
-                    )}
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Kargo</span>
-                      <span className="text-accent">Ücretsiz</span>
+                      {isFreeShipping ? (
+                        <span className="text-accent">Ücretsiz</span>
+                      ) : (
+                        <span>₺{shippingCost}</span>
+                      )}
                     </div>
                   </div>
+
+                  {/* Bedava kargo bilgisi */}
+                  {shippingSettings.is_enabled && !isFreeShipping && (
+                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-4">
+                      <p className="text-xs text-blue-600 dark:text-blue-400">
+                        ₺{(shippingSettings.free_shipping_threshold - subtotal).toFixed(0)} daha ekleyin, <span className="font-semibold">kargo bedava</span> olsun!
+                      </p>
+                    </div>
+                  )}
 
                   <div className="border-t border-border pt-4 mb-6">
                     <div className="flex justify-between items-center">
                       <span className="font-semibold">Toplam</span>
-                      <div className="text-right">
-                        {appliedDiscount && (
-                          <span className="text-sm text-muted-foreground line-through mr-2">
-                            ₺{subtotal}
-                          </span>
-                        )}
-                        <span className="text-2xl font-bold text-gradient">₺{total}</span>
-                      </div>
+                      <span className="text-2xl font-bold text-gradient">₺{total}</span>
                     </div>
                   </div>
-
-                  {/* Coupon */}
-                  {appliedDiscount ? (
-                    <div className="flex items-center justify-between bg-accent/10 border border-accent/30 rounded-lg p-3 mb-6">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-accent" />
-                        <span className="text-sm font-medium">{appliedDiscount.code}</span>
-                        <span className="text-xs text-accent">
-                          (-₺{appliedDiscount.discountAmount.toFixed(2)})
-                        </span>
-                      </div>
-                      <button
-                        onClick={handleRemoveDiscount}
-                        className="text-muted-foreground hover:text-destructive transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="mb-6 space-y-2">
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                          <Input 
-                            placeholder="İndirim kodu" 
-                            value={couponCode}
-                            onChange={(e) => {
-                              setCouponCode(toUpperCaseTurkish(e.target.value));
-                              setDiscountError("");
-                            }}
-                            className="pl-10 uppercase"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleApplyCoupon();
-                              }
-                            }}
-                          />
-                        </div>
-                        <Button 
-                          variant="outline" 
-                          onClick={handleApplyCoupon}
-                          disabled={discountLoading}
-                        >
-                          {discountLoading ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            "Uygula"
-                          )}
-                        </Button>
-                      </div>
-                      {discountError && (
-                        <p className="text-xs text-destructive">{discountError}</p>
-                      )}
-                    </div>
-                  )}
 
                   <Button variant="hero" className="w-full" size="lg" onClick={handleCheckout}>
                     Ödemeye Geç

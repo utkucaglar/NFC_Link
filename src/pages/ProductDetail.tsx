@@ -46,10 +46,39 @@ interface Product {
   colors: string[] | null;
   specs: Record<string, string> | null;
   monthly_subscription_fee: number;
+  free_subscription_months: number;
   has_subscription?: boolean;
   is_active: boolean;
   nfc_type: NFCType;
+  // İndirim alanları
+  discount_percentage: number;
+  is_discounted: boolean;
+  discount_start_date: string | null;
+  discount_end_date: string | null;
 }
+
+// İndirim aktif mi kontrol eden yardımcı fonksiyon
+const isDiscountActive = (product: Product): boolean => {
+  if (!product.is_discounted || !product.discount_percentage || product.discount_percentage <= 0) {
+    return false;
+  }
+  const now = new Date();
+  if (product.discount_start_date && new Date(product.discount_start_date) > now) {
+    return false;
+  }
+  if (product.discount_end_date && new Date(product.discount_end_date) < now) {
+    return false;
+  }
+  return true;
+};
+
+// İndirimli fiyatı hesaplayan yardımcı fonksiyon
+const getDiscountedPrice = (product: Product): number => {
+  if (!isDiscountActive(product)) {
+    return product.price;
+  }
+  return Math.round(product.price * (1 - product.discount_percentage / 100));
+};
 
 interface Review {
   id: string;
@@ -731,11 +760,20 @@ export default function ProductDetail() {
   };
 
   const addProductToCart = (customization: any) => {
-    const totalPrice = hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price;
+    // İndirimli fiyatı kullan
+    const finalPrice = getDiscountedPrice(product);
     const baseCustomization: Record<string, unknown> = { renk: colors[selectedColor] };
     if (requiresCustomization) {
       baseCustomization.nfcType = nfcType;
-      if (hasSub) baseCustomization.subscriptionFee = product.monthly_subscription_fee || 29;
+      if (hasSub) {
+        baseCustomization.subscriptionFee = product.monthly_subscription_fee || 29;
+        baseCustomization.freeSubscriptionMonths = product.free_subscription_months || 1;
+      }
+    }
+    // İndirim bilgisini de ekle
+    if (isDiscountActive(product)) {
+      baseCustomization.originalPrice = product.price;
+      baseCustomization.discountPercentage = product.discount_percentage;
     }
     if (customization) Object.assign(baseCustomization, customization);
     for (let i = 0; i < quantity; i++) {
@@ -743,7 +781,7 @@ export default function ProductDetail() {
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: totalPrice,
+        price: finalPrice,
         image: productImage,
         customization: { ...baseCustomization }
       });
@@ -789,6 +827,13 @@ export default function ProductDetail() {
                   />
                 </AnimatePresence>
               </div>
+              
+              {/* Discount Badge */}
+              {isDiscountActive(product) && (
+                <div className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1.5 rounded-lg shadow-lg">
+                  <span className="text-sm font-bold">%{product.discount_percentage} İNDİRİM</span>
+                </div>
+              )}
               
               {/* Image Counter */}
               {productImages.length > 1 && (
@@ -854,22 +899,51 @@ export default function ProductDetail() {
 
               {/* Price */}
               <div className="mb-6">
-                <div className="flex items-baseline gap-3">
-                  <span className="text-4xl font-bold text-gradient">
-                    ₺{(hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price).toFixed(0)}
-                  </span>
-                </div>
-                {hasSub ? (
-                  <>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik dahil)
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Sonraki aylar: ₺{product.monthly_subscription_fee || 29}/ay
-                    </p>
-                  </>
+                {/* İndirim Badge ve Fiyat */}
+                {isDiscountActive(product) ? (
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 bg-red-500 text-white px-3 py-1 rounded-lg">
+                      <span className="text-sm font-bold">%{product.discount_percentage} İNDİRİM</span>
+                    </div>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-2xl text-muted-foreground line-through">
+                        ₺{product.price.toFixed(0)}
+                      </span>
+                      <span className="text-4xl font-bold text-red-500">
+                        ₺{getDiscountedPrice(product)}
+                      </span>
+                    </div>
+                  </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground mt-1">Abonelik yok</p>
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-4xl font-bold text-gradient">
+                      ₺{product.price.toFixed(0)}
+                    </span>
+                  </div>
+                )}
+                
+                {hasSub ? (
+                  <div className="mt-3 space-y-3">
+                    <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+                          <Check className="w-4 h-4 text-white" />
+                        </div>
+                        <p className="text-sm font-semibold text-green-700 dark:text-green-400">
+                          {product.free_subscription_months || 1} Ay Bedava Abonelik Dahil!
+                        </p>
+                      </div>
+                      <p className="text-sm text-muted-foreground pl-8">
+                        Sadece ürün fiyatını ödeyin, ilk {product.free_subscription_months || 1} ay abonelik bizden hediye.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-muted text-xs font-medium">i</span>
+                      <span>{product.free_subscription_months || 1} ay sonra aylık ₺{product.monthly_subscription_fee || 29} abonelik ücreti başlar</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-1">Tek seferlik ödeme, abonelik yok</p>
                 )}
               </div>
 
@@ -921,7 +995,7 @@ export default function ProductDetail() {
               {/* Add to Cart */}
               <Button size="lg" className="w-full mb-6" onClick={handleAddToCartClick}>
                 <ShoppingCart className="w-5 h-5 mr-2" />
-                {requiresCustomization ? "Bilgileri Gir ve Sepete Ekle" : "Sepete Ekle"} - ₺{((hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price) * quantity).toFixed(0)}
+                {requiresCustomization ? "Bilgileri Gir ve Sepete Ekle" : "Sepete Ekle"} - ₺{(getDiscountedPrice(product) * quantity).toFixed(0)}
               </Button>
               
               {requiresCustomization && (
@@ -1285,7 +1359,7 @@ export default function ProductDetail() {
             </Button>
             <Button variant="hero" onClick={handleFormSubmit}>
               <ShoppingCart className="w-4 h-4 mr-2" />
-              Sepete Ekle - ₺{((hasSub ? product.price + (product.monthly_subscription_fee || 29) : product.price) * quantity).toFixed(0)}
+              Sepete Ekle - ₺{(getDiscountedPrice(product) * quantity).toFixed(0)}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -34,7 +34,6 @@ import DistanceSalesAgreement from "./pages/legal/DistanceSalesAgreement";
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminOrders from "./pages/admin/Orders";
 import AdminProducts from "./pages/admin/Products";
-import AdminDiscounts from "./pages/admin/Discounts";
 import AdminSubscriptions from "./pages/admin/Subscriptions";
 import AdminReviews from "./pages/admin/Reviews";
 import AdminSupport from "./pages/admin/Support";
@@ -73,7 +72,6 @@ const App = () => (
             <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
             <Route path="/admin/orders" element={<AdminRoute><AdminOrders /></AdminRoute>} />
             <Route path="/admin/products" element={<AdminRoute><AdminProducts /></AdminRoute>} />
-            <Route path="/admin/discounts" element={<AdminRoute><AdminDiscounts /></AdminRoute>} />
             <Route path="/admin/subscriptions" element={<AdminRoute><AdminSubscriptions /></AdminRoute>} />
             <Route path="/admin/reviews" element={<AdminRoute><AdminReviews /></AdminRoute>} />
             <Route path="/admin/support" element={<AdminRoute><AdminSupport /></AdminRoute>} />

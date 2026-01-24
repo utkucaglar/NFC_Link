@@ -58,12 +58,18 @@ interface Product {
   colors: string[] | null;
   specs: Record<string, string> | null;
   monthly_subscription_fee: number;
+  free_subscription_months: number;
   has_subscription: boolean;
   stock_quantity: number;
   sku: string | null;
   is_active: boolean;
   sort_order: number;
   nfc_type: NFCType;
+  // İndirim alanları
+  discount_percentage: number;
+  is_discounted: boolean;
+  discount_start_date: string | null;
+  discount_end_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,12 +94,18 @@ const emptyProduct: Partial<Product> = {
   colors: [],
   specs: {},
   monthly_subscription_fee: 29,
+  free_subscription_months: 1,
   has_subscription: true,
   stock_quantity: 0,
   sku: "",
   is_active: true,
   sort_order: 0,
   nfc_type: null,
+  // İndirim varsayılanları
+  discount_percentage: 0,
+  is_discounted: false,
+  discount_start_date: null,
+  discount_end_date: null,
 };
 
 export default function AdminProducts() {
@@ -107,7 +119,7 @@ export default function AdminProducts() {
   const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"basic" | "details" | "specs">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "details" | "specs" | "discount">("basic");
   
   // Feature, color, spec ekleme için state'ler
   const [newFeature, setNewFeature] = useState("");
@@ -529,12 +541,18 @@ export default function AdminProducts() {
         colors: editingProduct.colors || null,
         specs: editingProduct.specs || null,
         monthly_subscription_fee: hasSub ? (editingProduct.monthly_subscription_fee ?? 29) : 0,
+        free_subscription_months: hasSub ? (editingProduct.free_subscription_months ?? 1) : 0,
         has_subscription: hasSub,
         stock_quantity: editingProduct.stock_quantity || 0,
         sku: editingProduct.sku || null,
         is_active: editingProduct.is_active ?? true,
         sort_order: editingProduct.sort_order || 0,
         nfc_type: editingProduct.nfc_type || null,
+        // İndirim alanları
+        discount_percentage: editingProduct.discount_percentage || 0,
+        is_discounted: editingProduct.is_discounted ?? false,
+        discount_start_date: editingProduct.discount_start_date || null,
+        discount_end_date: editingProduct.discount_end_date || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -1023,6 +1041,13 @@ export default function AdminProducts() {
                     <Badge variant="secondary">Pasif</Badge>
                   </div>
                 )}
+                {product.is_discounted && product.discount_percentage > 0 && (
+                  <div className="absolute top-2 left-2">
+                    <Badge className="bg-red-500 text-white font-bold">
+                      %{product.discount_percentage} İNDİRİM
+                    </Badge>
+                  </div>
+                )}
               </div>
 
               <div className="p-4">
@@ -1041,9 +1066,22 @@ export default function AdminProducts() {
                 </p>
 
                 <div className="flex items-center justify-between">
-                  <span className="text-xl font-bold text-gradient">
-                    ₺{product.price.toLocaleString("tr-TR")}
-                  </span>
+                  <div>
+                    {product.is_discounted && product.discount_percentage > 0 ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground line-through">
+                          ₺{product.price.toLocaleString("tr-TR")}
+                        </span>
+                        <span className="text-xl font-bold text-green-600">
+                          ₺{(product.price * (1 - product.discount_percentage / 100)).toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-xl font-bold text-gradient">
+                        ₺{product.price.toLocaleString("tr-TR")}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       size="icon"
@@ -1112,7 +1150,7 @@ export default function AdminProducts() {
           </DialogHeader>
 
           {/* Tabs */}
-          <div className="flex gap-2 border-b border-border pb-4">
+          <div className="flex gap-2 border-b border-border pb-4 flex-wrap">
             <Button
               variant={activeTab === "basic" ? "default" : "ghost"}
               size="sm"
@@ -1133,6 +1171,17 @@ export default function AdminProducts() {
               onClick={() => setActiveTab("specs")}
             >
               Teknik Bilgiler
+            </Button>
+            <Button
+              variant={activeTab === "discount" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab("discount")}
+              className={editingProduct?.is_discounted ? "text-green-600" : ""}
+            >
+              İndirim
+              {editingProduct?.is_discounted && (
+                <span className="ml-1 w-2 h-2 rounded-full bg-green-500" />
+              )}
             </Button>
           </div>
 
@@ -1254,16 +1303,32 @@ export default function AdminProducts() {
                   </div>
 
                   {(editingProduct?.has_subscription !== false && editingProduct?.nfc_type !== "nfc-yok") && (
-                  <div>
-                    <Label htmlFor="subscription">Aylık Abonelik (₺)</Label>
-                    <Input
-                      id="subscription"
-                      type="number"
-                      value={editingProduct?.monthly_subscription_fee ?? ""}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, monthly_subscription_fee: parseFloat(e.target.value) || 0 })}
-                      placeholder="29"
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <Label htmlFor="subscription">Aylık Abonelik (₺)</Label>
+                      <Input
+                        id="subscription"
+                        type="number"
+                        value={editingProduct?.monthly_subscription_fee ?? ""}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, monthly_subscription_fee: parseFloat(e.target.value) || 0 })}
+                        placeholder="29"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="free_months">Bedava Abonelik (Ay)</Label>
+                      <Input
+                        id="free_months"
+                        type="number"
+                        min="0"
+                        value={editingProduct?.free_subscription_months ?? 1}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, free_subscription_months: parseInt(e.target.value) || 0 })}
+                        placeholder="1"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Ürün satın alındığında kaç ay bedava abonelik verilecek
+                      </p>
+                    </div>
+                  </>
                   )}
 
                   <div>
@@ -1804,6 +1869,99 @@ export default function AdminProducts() {
               </div>
             )}
 
+            {/* Discount Tab */}
+            {activeTab === "discount" && (
+              <div className="space-y-6">
+                <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800 rounded-xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-green-800 dark:text-green-300">Ürün İndirimi</h3>
+                      <p className="text-sm text-green-600 dark:text-green-400">Bu ürün için özel indirim ayarlayın</p>
+                    </div>
+                    <Switch
+                      checked={editingProduct?.is_discounted ?? false}
+                      onCheckedChange={(checked) => setEditingProduct({ ...editingProduct, is_discounted: checked })}
+                    />
+                  </div>
+
+                  {editingProduct?.is_discounted && (
+                    <div className="space-y-4 pt-4 border-t border-green-200 dark:border-green-800">
+                      <div>
+                        <Label htmlFor="discount_percentage">İndirim Yüzdesi (%)</Label>
+                        <div className="flex items-center gap-3 mt-1">
+                          <Input
+                            id="discount_percentage"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={editingProduct?.discount_percentage ?? 0}
+                            onChange={(e) => setEditingProduct({ ...editingProduct, discount_percentage: parseFloat(e.target.value) || 0 })}
+                            placeholder="10"
+                            className="max-w-[120px]"
+                          />
+                          <span className="text-2xl font-bold text-green-600">%{editingProduct?.discount_percentage || 0}</span>
+                        </div>
+                      </div>
+
+                      {/* Fiyat Önizlemesi */}
+                      {editingProduct?.price > 0 && editingProduct?.discount_percentage > 0 && (
+                        <div className="bg-white dark:bg-background rounded-lg p-4 border border-green-200 dark:border-green-800">
+                          <p className="text-sm text-muted-foreground mb-2">Fiyat Önizlemesi</p>
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg text-muted-foreground line-through">₺{editingProduct.price}</span>
+                            <span className="text-2xl font-bold text-green-600">
+                              ₺{(editingProduct.price * (1 - (editingProduct.discount_percentage || 0) / 100)).toFixed(0)}
+                            </span>
+                            <Badge className="bg-red-500 text-white">
+                              %{editingProduct.discount_percentage} İNDİRİM
+                            </Badge>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="discount_start_date">Başlangıç Tarihi (Opsiyonel)</Label>
+                          <Input
+                            id="discount_start_date"
+                            type="datetime-local"
+                            value={editingProduct?.discount_start_date ? new Date(editingProduct.discount_start_date).toISOString().slice(0, 16) : ""}
+                            onChange={(e) => setEditingProduct({ 
+                              ...editingProduct, 
+                              discount_start_date: e.target.value ? new Date(e.target.value).toISOString() : null 
+                            })}
+                            className="mt-1"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">Boş bırakılırsa hemen başlar</p>
+                        </div>
+                        <div>
+                          <Label htmlFor="discount_end_date">Bitiş Tarihi (Opsiyonel)</Label>
+                          <Input
+                            id="discount_end_date"
+                            type="datetime-local"
+                            value={editingProduct?.discount_end_date ? new Date(editingProduct.discount_end_date).toISOString().slice(0, 16) : ""}
+                            onChange={(e) => setEditingProduct({ 
+                              ...editingProduct, 
+                              discount_end_date: e.target.value ? new Date(e.target.value).toISOString() : null 
+                            })}
+                            className="mt-1"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">Boş bırakılırsa süresiz devam eder</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {!editingProduct?.is_discounted && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>İndirim aktif değil. Yukarıdaki düğmeyi açarak indirim ayarlayabilirsiniz.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-3 pt-4 border-t border-border">
               <Button
@@ -1814,7 +1972,6 @@ export default function AdminProducts() {
                   setEditingProduct(null);
                   setSelectedFile(null);
                   setImagePreview(null);
-                  setImageUploadMethod("url");
                   setActiveTab("basic");
                 }}
               >
