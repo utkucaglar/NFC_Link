@@ -78,7 +78,8 @@ export default function AdminDashboard() {
 
       const totalOrders = orders?.length || 0;
       const pendingOrders = orders?.filter((o) => o.status === "pending").length || 0;
-      const totalRevenue = orders?.reduce((sum, o) => sum + (o.total || 0), 0) || 0;
+      // İptal edilen siparişleri toplam gelire dahil etme
+      const totalRevenue = orders?.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + (o.total || 0), 0) || 0;
 
       setStats({
         totalOrders,
