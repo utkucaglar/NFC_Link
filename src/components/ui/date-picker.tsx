@@ -87,8 +87,8 @@ export function DatePicker({
   const handleDateSelect = (day: number) => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    const selected = new Date(year, month, day);
-    const dateString = selected.toISOString().split("T")[0];
+    // Use local date format to avoid timezone issues
+    const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     
     // Check min/max constraints
     if (min && dateString < min) return;
@@ -108,7 +108,8 @@ export function DatePicker({
 
   const handleToday = () => {
     const today = new Date();
-    const todayString = today.toISOString().split("T")[0];
+    // Use local date format to avoid timezone issues
+    const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     
     if (min && todayString < min) return;
     if (max && todayString > max) return;
@@ -124,13 +125,15 @@ export function DatePicker({
 
   const formatDisplayValue = (dateString: string) => {
     if (!dateString) return "";
-    const date = new Date(dateString);
-    return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+    // Parse date string directly to avoid timezone issues
+    const [year, month, day] = dateString.split('-').map(Number);
+    return `${day} ${months[month - 1]} ${year}`;
   };
 
   const days = getDaysInMonth(currentDate);
   const today = new Date();
-  const todayString = today.toISOString().split("T")[0];
+  // Use local date format to avoid timezone issues
+  const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
   return (
     <div ref={inputRef} className={cn("relative", className)}>
@@ -223,11 +226,8 @@ export function DatePicker({
                 return <div key={`empty-${index}`} className="h-8" />;
               }
 
-              const dateString = new Date(
-                currentDate.getFullYear(),
-                currentDate.getMonth(),
-                day
-              ).toISOString().split("T")[0];
+              // Use local date format to avoid timezone issues
+              const dateString = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
               const isSelected = dateString === value;
               const isToday = dateString === todayString;
