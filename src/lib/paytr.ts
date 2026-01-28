@@ -94,20 +94,57 @@ export function encodeBasket(items: Array<{ name: string; price: number; quantit
 
 export function loadPayTRIframe(token: string, containerId = "paytr-iframe-container"): Promise<void> {
   return new Promise((resolve, reject) => {
-    const container = document.getElementById(containerId);
-    if (!container) {
-      reject(new Error("PayTR iframe container bulunamadı"));
-      return;
-    }
+    // Container'ı bulmak için birkaç deneme yap (React render gecikmesi için)
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    const tryLoadIframe = () => {
+      attempts++;
+      const container = document.getElementById(containerId);
+      
+      if (!container) {
+        if (attempts < maxAttempts) {
+          console.log(`PayTR container bulunamadı, tekrar deneniyor... (${attempts}/${maxAttempts})`);
+          setTimeout(tryLoadIframe, 200);
+          return;
+        }
+        console.error("PayTR iframe container bulunamadı");
+        reject(new Error("PayTR iframe container bulunamadı"));
+        return;
+      }
 
-    container.innerHTML = "";
-    const iframe = document.createElement("iframe");
-    iframe.id = "paytr-iframe";
-    iframe.src = `https://www.paytr.com/odeme/guvenli/${token}`;
-    iframe.style.cssText = "width:100%;height:600px;border:none;border-radius:8px;";
-    iframe.onload = () => resolve();
-    iframe.onerror = () => reject(new Error("PayTR iframe yüklenemedi"));
-    container.appendChild(iframe);
+      console.log("PayTR iframe yükleniyor, token:", token.substring(0, 20) + "...");
+      
+      container.innerHTML = "";
+      const iframe = document.createElement("iframe");
+      iframe.id = "paytr-iframe";
+      iframe.src = `https://www.paytr.com/odeme/guvenli/${token}`;
+      iframe.style.cssText = "width:100%;height:600px;border:none;border-radius:8px;background:#fff;";
+      iframe.allow = "payment";
+      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation");
+      
+      // Timeout ile yükleme kontrolü
+      const loadTimeout = setTimeout(() => {
+        console.warn("PayTR iframe yükleme timeout (30s)");
+        // Timeout olsa bile reject etme, kullanıcı bekleyebilir
+      }, 30000);
+      
+      iframe.onload = () => {
+        clearTimeout(loadTimeout);
+        console.log("PayTR iframe başarıyla yüklendi");
+        resolve();
+      };
+      
+      iframe.onerror = (e) => {
+        clearTimeout(loadTimeout);
+        console.error("PayTR iframe yükleme hatası:", e);
+        reject(new Error("PayTR iframe yüklenemedi"));
+      };
+      
+      container.appendChild(iframe);
+    };
+    
+    tryLoadIframe();
   });
 }
 

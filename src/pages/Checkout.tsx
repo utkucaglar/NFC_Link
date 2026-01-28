@@ -540,8 +540,16 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       setLoading(false);
 
       // DOM güncellemesini bekle, sonra iframe'i yükle
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await loadPayTRIframe(tokenResult.token);
+      // Mobil cihazlarda React render daha yavaş olabilir
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      try {
+        await loadPayTRIframe(tokenResult.token);
+      } catch (iframeError: any) {
+        console.error("Iframe yükleme hatası:", iframeError);
+        toast.error("Ödeme sayfası yüklenemedi. Lütfen sayfayı yenileyip tekrar deneyin.");
+        // Iframe yüklenemese bile kullanıcı bekleyebilir, polling devam etsin
+      }
 
       // Ödeme durumunu kontrol et (polling)
       // paymentId state'ine güvenmek yerine doğrudan tokenResult.payment_id kullan
@@ -1180,7 +1188,12 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                           <p className="text-sm text-muted-foreground mb-4">
                             Lütfen aşağıdaki formu doldurarak ödemenizi tamamlayın.
                           </p>
-                          <div id="paytr-iframe-container" className="w-full min-h-[600px]"></div>
+                          <div id="paytr-iframe-container" className="w-full min-h-[600px] flex items-center justify-center bg-background">
+                            <div className="text-center">
+                              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+                              <p className="text-muted-foreground">Ödeme sayfası yükleniyor...</p>
+                            </div>
+                          </div>
                         </div>
                         <Button
                           variant="outline"
