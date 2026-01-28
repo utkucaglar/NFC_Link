@@ -193,30 +193,94 @@ Deno.serve(async (req) => {
     const hash = formData.get("hash") as string;
     const failed_reason_msg = formData.get("failed_reason_msg") as string;
 
-    if (!merchant_oid || !status || !hash) throw new Error("Missing parameters");
+    console.log("PayTR callback received:", { merchant_oid, status, total_amount });
+
+    if (!merchant_oid || !status || !hash) {
+      console.error("Missing parameters:", { merchant_oid, status, hash: !!hash });
+      throw new Error("Missing parameters");
+    }
 
     const merchant_key = Deno.env.get("PAYTR_MERCHANT_KEY") ?? "";
     const merchant_salt = Deno.env.get("PAYTR_MERCHANT_SALT") ?? "";
 
-    if (!merchant_key || !merchant_salt) throw new Error("Config error");
+    if (!merchant_key || !merchant_salt) {
+      console.error("Config error: merchant_key or merchant_salt missing");
+      throw new Error("Config error");
+    }
 
     // Hash doğrulama
     const calculatedHash = await createPayTRHash(`${merchant_oid}${merchant_salt}${status}${total_amount}`, merchant_key);
-    if (calculatedHash !== hash) throw new Error("Hash mismatch");
+    if (calculatedHash !== hash) {
+      console.error("Hash mismatch:", { calculated: calculatedHash, received: hash });
+      throw new Error("Hash mismatch");
+    }
+
+    console.log("Hash verified successfully for:", merchant_oid);
 
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    // Payment bul
-    const { data: payment, error: paymentError } = await supabaseAdmin
+    // Payment bul - önce paytr_order_id ile dene
+    let payment = null;
+    let paymentError = null;
+    
+    const { data: paymentByOrderId, error: err1 } = await supabaseAdmin
       .from("payments")
       .select("id, order_id, status")
       .eq("paytr_order_id", merchant_oid)
       .single();
+    
+    if (paymentByOrderId) {
+      payment = paymentByOrderId;
+      console.log("Payment found by paytr_order_id:", payment.id);
+    } else {
+      console.log("Payment not found by paytr_order_id, trying orders table...");
+      
+      // orders tablosundan order_number ile ara
+      const { data: order, error: orderErr } = await supabaseAdmin
+        .from("orders")
+        .select("id")
+        .eq("order_number", merchant_oid)
+        .single();
+      
+      if (order) {
+        console.log("Order found:", order.id);
+        
+        // Bu order_id ile payment bul
+        const { data: paymentByOrder, error: err2 } = await supabaseAdmin
+          .from("payments")
+          .select("id, order_id, status")
+          .eq("order_id", order.id)
+          .single();
+        
+        if (paymentByOrder) {
+          payment = paymentByOrder;
+          console.log("Payment found by order_id:", payment.id);
+          
+          // paytr_order_id'yi güncelle (gelecek için)
+          await supabaseAdmin
+            .from("payments")
+            .update({ paytr_order_id: merchant_oid })
+            .eq("id", payment.id);
+        }
+      }
+    }
 
-    if (paymentError || !payment) throw new Error("Payment not found");
+    if (!payment) {
+      console.error("Payment not found for merchant_oid:", merchant_oid);
+      
+      // Tüm pending payment'ları listele (debug için)
+      const { data: pendingPayments } = await supabaseAdmin
+        .from("payments")
+        .select("id, order_id, paytr_order_id, status")
+        .eq("status", "pending")
+        .limit(5);
+      console.log("Pending payments:", JSON.stringify(pendingPayments));
+      
+      throw new Error("Payment not found");
+    }
 
     // Duplicate kontrolü
     if (payment.status === "succeeded" || payment.status === "failed") {
