@@ -683,7 +683,6 @@ export default function Cart() {
         partnerName1: item.customization?.partnerName1 || "",
         partnerName2: item.customization?.partnerName2 || "",
         relationshipStartDate: item.customization?.relationshipStartDate || "",
-        backgroundImage: item.customization?.backgroundImage || "",
         subtitle: item.customization?.subtitle || defaultRedirectData.subtitle,
         theme: item.customization?.theme || "romantic",
       });

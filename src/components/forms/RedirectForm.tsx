@@ -8,7 +8,6 @@ export interface RedirectData {
   partnerName1: string;
   partnerName2: string;
   relationshipStartDate: string;
-  backgroundImage: string;
   subtitle: string;
   theme: string;
 }
@@ -17,7 +16,6 @@ export const defaultRedirectData: RedirectData = {
   partnerName1: "",
   partnerName2: "",
   relationshipStartDate: "",
-  backgroundImage: "",
   subtitle: "Birlikte olduğumuz her an bir ömür gibi…",
   theme: "romantic",
 };
@@ -111,23 +109,6 @@ export function RedirectForm({ data, onChange, errors = {}, onErrorClear }: Redi
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      // Dosya boyutu kontrolü (5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        alert("Dosya boyutu 5MB'dan küçük olmalıdır");
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        handleChange("backgroundImage", reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const selectedTheme = themeStyles[data.theme] || themeStyles.romantic;
 
   return (
@@ -196,36 +177,6 @@ export function RedirectForm({ data, onChange, errors = {}, onErrorClear }: Redi
         </p>
       </div>
 
-      {/* Background Image */}
-      <div className="space-y-2">
-        <Label htmlFor="backgroundImage">Arka Plan Görseli (Opsiyonel)</Label>
-        <Input
-          id="backgroundImage"
-          type="file"
-          accept="image/*"
-          onChange={handleImageUpload}
-        />
-        <p className="text-xs text-muted-foreground">
-          JPG, PNG veya GIF (Max 5MB). Yüklemezseniz tema rengi kullanılır.
-        </p>
-        {data.backgroundImage && (
-          <div className="relative w-full h-32 rounded-lg overflow-hidden border">
-            <img
-              src={data.backgroundImage}
-              alt="Önizleme"
-              className="w-full h-full object-cover"
-            />
-            <button
-              type="button"
-              onClick={() => handleChange("backgroundImage", "")}
-              className="absolute top-2 right-2 bg-destructive text-destructive-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs"
-            >
-              ×
-            </button>
-          </div>
-        )}
-      </div>
-
       {/* Theme Selection */}
       <div className="space-y-3">
         <Label>Tema Seçimi</Label>
@@ -268,25 +219,11 @@ export function RedirectForm({ data, onChange, errors = {}, onErrorClear }: Redi
         <div
           className={cn(
             "relative p-6 text-center",
-            data.backgroundImage ? "bg-black" : cn("bg-gradient-to-br", selectedTheme.gradient)
+            cn("bg-gradient-to-br", selectedTheme.gradient)
           )}
-          style={
-            data.backgroundImage
-              ? {
-                  backgroundImage: `url(${data.backgroundImage})`,
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
-                }
-              : undefined
-          }
         >
           {/* overlay */}
-          <div
-            className={cn(
-              "absolute inset-0",
-              data.backgroundImage ? "bg-black/55" : "bg-black/25"
-            )}
-          />
+          <div className="absolute inset-0 bg-black/25" />
 
           <div className="relative">
             <div className="flex items-center justify-center gap-2 mb-3">

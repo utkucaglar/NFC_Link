@@ -31,7 +31,6 @@ interface CoupleData {
   partnerName1: string;
   partnerName2: string;
   relationshipStartDate: string;
-  backgroundImage?: string;
   subtitle?: string;
   theme: string;
 }
@@ -466,14 +465,7 @@ export default function NFCRedirect() {
   return (
     <div className="min-h-screen relative text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Background */}
-      {data.backgroundImage ? (
-        <>
-          <div className="fixed inset-0 bg-cover bg-center bg-no-repeat scale-105" style={{ backgroundImage: `url(${data.backgroundImage})` }} />
-          <div className="fixed inset-0 bg-black/50" />
-        </>
-      ) : (
-        <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-purple-900/50 to-slate-900" />
-      )}
+      <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-purple-900/50 to-slate-900" />
       <div className="fixed inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40" />
 
       {/* Header */}

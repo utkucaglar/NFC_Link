@@ -602,7 +602,6 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                 partnerName1: customization.partnerName1,
                 partnerName2: customization.partnerName2,
                 relationshipStartDate: customization.relationshipStartDate,
-                backgroundImage: customization.backgroundImage,
                 subtitle: customization.subtitle,
                 theme: customization.theme,
               } : {}),
