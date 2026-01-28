@@ -138,11 +138,15 @@ Deno.serve(async (req) => {
     formData.append("test_mode", test_mode);
     formData.append("lang", PAYTR_LANG);
 
+    console.log("PayTR API request starting for order:", order_number);
+    
     const paytrResponse = await fetch(PAYTR_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formData.toString(),
     });
+
+    console.log("PayTR API response status:", paytrResponse.status);
 
     if (!paytrResponse.ok) {
       console.error("PayTR API error:", paytrResponse.status, paytrResponse.statusText);
@@ -150,11 +154,14 @@ Deno.serve(async (req) => {
     }
 
     const paytrResult = await paytrResponse.json();
+    console.log("PayTR API result:", JSON.stringify(paytrResult));
 
     if (paytrResult.status !== "success") {
       console.error("PayTR token creation failed:", paytrResult.reason);
       throw new Error(paytrResult.reason || "Ödeme token oluşturulamadı");
     }
+    
+    console.log("PayTR token created successfully");
 
     // Payment kaydı
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
