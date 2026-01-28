@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useNavigate, Link } from "react-router-dom";
 import { 
@@ -121,6 +121,67 @@ export default function Checkout() {
 
   // Checkout completed flag - to prevent redirect to cart after clearing
   const [checkoutCompleted, setCheckoutCompleted] = useState(false);
+
+  // Refs for cleanup - ödeme işlemi yarıda kesilirse siparişi iptal etmek için
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingOrderIdRef = useRef<string | null>(null);
+  const paymentCompletedRef = useRef<boolean>(false);
+
+  // Ödeme yarıda kesilirse siparişi iptal eden fonksiyon
+  const cancelPendingOrder = useCallback(async (orderIdToCancel: string) => {
+    try {
+      await supabase
+        .from("orders")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("id", orderIdToCancel)
+        .eq("status", "pending"); // Sadece pending ise iptal et
+      console.log("Pending sipariş iptal edildi:", orderIdToCancel);
+    } catch (error) {
+      console.warn("Sipariş iptal edilemedi:", error);
+    }
+  }, []);
+
+  // Cleanup: Component unmount olduğunda veya sayfa kapatıldığında pending siparişi iptal et
+  useEffect(() => {
+    // beforeunload: Kullanıcı sayfayı kapatmaya/yenilemeye çalıştığında
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Eğer ödeme süreci başladı ve tamamlanmadıysa uyar
+      if (pendingOrderIdRef.current && !paymentCompletedRef.current) {
+        e.preventDefault();
+        e.returnValue = "Ödeme işlemi devam ediyor. Sayfadan ayrılmak siparişinizi iptal edecektir.";
+        return e.returnValue;
+      }
+    };
+
+    // visibilitychange: Sayfa gizlendiğinde (tab değişikliği, minimize vb.)
+    const handleVisibilityChange = () => {
+      // Sayfa gizlendi ve ödeme tamamlanmadıysa - iptal etme, sadece log
+      // (Kullanıcı sekme değiştirip geri dönebilir)
+      if (document.visibilityState === "hidden" && pendingOrderIdRef.current && !paymentCompletedRef.current) {
+        console.log("Ödeme sayfası arka plana alındı, sipariş beklemede:", pendingOrderIdRef.current);
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Component unmount olduğunda
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+
+      // Polling interval'ı temizle
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+
+      // Ödeme tamamlanmadıysa pending siparişi iptal et
+      if (pendingOrderIdRef.current && !paymentCompletedRef.current) {
+        cancelPendingOrder(pendingOrderIdRef.current);
+      }
+    };
+  }, [cancelPendingOrder]);
 
   // Load saved addresses
   useEffect(() => {
@@ -429,6 +490,8 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
       if (orderError) throw orderError;
       
       setOrderId(orderData.id);
+      pendingOrderIdRef.current = orderData.id; // Cleanup için ref'e kaydet
+      paymentCompletedRef.current = false; // Ödeme henüz tamamlanmadı
 
       // PayTR için sepet bilgilerini hazırla
       const basketItems = cartItems.map(item => ({
@@ -487,9 +550,13 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           const status = await checkPaymentStatus(currentPaymentId);
           if (status.status === "succeeded") {
             clearInterval(checkInterval);
+            pollingIntervalRef.current = null;
+            paymentCompletedRef.current = true; // Ödeme başarılı
+            pendingOrderIdRef.current = null; // Artık iptal edilmesine gerek yok
             await handlePaymentSuccess(orderData.id, orderNumber, total);
           } else if (status.status === "failed") {
             clearInterval(checkInterval);
+            pollingIntervalRef.current = null;
             toast.error("Ödeme başarısız oldu");
             // Callback gecikirse/kullanıcı kapatırsa pending kalmasın
             try {
@@ -497,6 +564,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                 .from("orders")
                 .update({ status: "cancelled", updated_at: new Date().toISOString() })
                 .eq("id", orderData.id);
+              pendingOrderIdRef.current = null; // Sipariş zaten iptal edildi
             } catch (e) {
               console.warn("Order cancel update failed:", e);
             }
@@ -507,9 +575,15 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         }
       }, 2000); // Her 2 saniyede bir kontrol et
 
+      // Ref'e kaydet (cleanup için)
+      pollingIntervalRef.current = checkInterval;
+
       // 5 dakika sonra polling'i durdur
       setTimeout(() => {
         clearInterval(checkInterval);
+        if (pollingIntervalRef.current === checkInterval) {
+          pollingIntervalRef.current = null;
+        }
       }, 5 * 60 * 1000);
 
     } catch (error: any) {
@@ -1111,18 +1185,29 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                         <Button
                           variant="outline"
                           onClick={() => {
+                            // Polling'i durdur
+                            if (pollingIntervalRef.current) {
+                              clearInterval(pollingIntervalRef.current);
+                              pollingIntervalRef.current = null;
+                            }
+                            
                             setShowPayTRIframe(false);
                             setPaymentId(null);
                             setOrderId(null);
+                            
                             // Kullanıcı ödeme ekranını kapattıysa siparişi iptal et
-                            if (orderId) {
+                            const orderToCancel = orderId || pendingOrderIdRef.current;
+                            if (orderToCancel) {
                               supabase
                                 .from("orders")
                                 .update({ status: "cancelled", updated_at: new Date().toISOString() })
-                                .eq("id", orderId)
+                                .eq("id", orderToCancel)
+                                .eq("status", "pending") // Sadece pending ise iptal et
                                 .then(({ error }) => {
                                   if (error) console.warn("Order cancel update failed:", error);
+                                  else toast.info("Sipariş iptal edildi");
                                 });
+                              pendingOrderIdRef.current = null;
                             }
                           }}
                           className="w-full"
