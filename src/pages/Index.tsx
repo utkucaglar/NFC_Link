@@ -451,7 +451,7 @@ export default function Index() {
               </div>
               <div>
                 <h3 className="font-semibold mb-1">Güvenli Ödeme</h3>
-                <p className="text-sm text-muted-foreground">Stripe ile 256-bit SSL şifreleme</p>
+                <p className="text-sm text-muted-foreground">PayTR ile 256-bit SSL şifreleme</p>
               </div>
             </motion.div>
 

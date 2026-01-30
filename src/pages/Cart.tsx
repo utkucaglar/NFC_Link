@@ -983,7 +983,7 @@ export default function Cart() {
                   </Button>
 
                   <p className="text-xs text-muted-foreground text-center mt-4">
-                    Stripe ile güvenli ödeme
+                    PayTR ile güvenli ödeme
                   </p>
                 </div>
               </motion.div>
