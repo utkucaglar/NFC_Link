@@ -33,6 +33,7 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getProductImage, formatPrice } from "@/lib/helpers";
+import Editor, { Toolbar, BtnBold, BtnItalic, BtnUnderline, BtnBulletList, BtnNumberedList } from "react-simple-wysiwyg";
 
 interface Category {
   id: number;
@@ -1459,13 +1460,24 @@ export default function AdminProducts() {
 
                 <div>
                   <Label htmlFor="long_description">Detaylı Açıklama</Label>
-                  <textarea
-                    id="long_description"
-                    value={editingProduct?.long_description || ""}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, long_description: e.target.value })}
-                    placeholder="Ürün detay sayfasında görünecek uzun açıklama..."
-                    className="w-full min-h-[120px] p-3 rounded-md border border-input bg-background text-sm resize-none"
-                  />
+                  <p className="text-xs text-muted-foreground mb-2">Kalın, italik, altı çizili ve liste kullanabilirsiniz. Satır atlamalar müşteri sayfasında korunur.</p>
+                  <div className="rounded-md border border-input bg-background overflow-hidden [&_.rsw-editor]:min-h-[120px] [&_.rsw-editor]:p-3 [&_.rsw-editor]:text-sm [&_.rsw-toolbar]:border-b [&_.rsw-toolbar]:border-input [&_.rsw-toolbar]:bg-muted/30 [&_.rsw-toolbar_button]:p-2">
+                    <Editor
+                      id="long_description"
+                      value={editingProduct?.long_description || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, long_description: e.target.value })}
+                      placeholder="Ürün detay sayfasında görünecek uzun açıklama..."
+                      containerProps={{ className: "w-full" }}
+                    >
+                      <Toolbar>
+                        <BtnBold />
+                        <BtnItalic />
+                        <BtnUnderline />
+                        <BtnBulletList />
+                        <BtnNumberedList />
+                      </Toolbar>
+                    </Editor>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between p-4 bg-muted/30 rounded-xl">

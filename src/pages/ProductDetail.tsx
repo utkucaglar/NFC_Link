@@ -19,6 +19,7 @@ import {
   DEFAULT_SPECS, 
   DEFAULT_COLORS 
 } from "@/lib/helpers";
+import DOMPurify from "dompurify";
 import {
   Dialog,
   DialogContent,
@@ -554,7 +555,16 @@ export default function ProductDetail() {
   
   // İlk yüklemede görseli ayarla
   const productImage = currentProductImage || getProductImage(product.image_url, product.category);
-  const longDescription = product.long_description || product.description || "Profesyonel NFC çözümü ile dijital varlığınızı paylaşın.";
+  const rawLongDescription = product.long_description || product.description || "Profesyonel NFC çözümü ile dijital varlığınızı paylaşın.";
+  // Eski düz metin: satır sonlarını <br /> yap; HTML ise olduğu gibi bırak. XSS için sanitize et.
+  const longDescriptionHtml = (() => {
+    const text = String(rawLongDescription || "").trim();
+    const withBreaks = text.includes("<") ? text : text.replace(/\n/g, "<br />");
+    return DOMPurify.sanitize(withBreaks, {
+      ALLOWED_TAGS: ["b", "i", "u", "strong", "em", "p", "br", "ul", "ol", "li"],
+      ALLOWED_ATTR: [],
+    });
+  })();
   
   // NFC tipi belirleme
   const nfcType = product.nfc_type || getNfcTypeFromCategory(product.category);
@@ -895,9 +905,10 @@ export default function ProductDetail() {
 
               <h1 className="text-3xl lg:text-4xl font-bold mb-4">{product.name}</h1>
               
-              <p className="text-muted-foreground mb-6">
-                {longDescription}
-              </p>
+              <div
+                className="text-muted-foreground mb-6 [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_ul]:my-2 [&_ol]:my-2 [&_li]:mb-1"
+                dangerouslySetInnerHTML={{ __html: longDescriptionHtml }}
+              />
 
               {/* Price */}
               <div className="mb-6">
