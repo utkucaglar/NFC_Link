@@ -351,7 +351,7 @@ export default function AdminReviews() {
       review.user_profiles?.first_name?.toLowerCase().includes(search) ||
       review.user_profiles?.last_name?.toLowerCase().includes(search) ||
       review.user_profiles?.email?.toLowerCase().includes(search) ||
-      review.products?.name.toLowerCase().includes(search)
+      (review.products?.name ?? '').toLowerCase().includes(search)
     );
   });
 
