@@ -57,7 +57,7 @@ database/
 └── 04_seed_data.sql   # Örnek veriler
 ```
 
-Detaylı bilgi için: [database/README.md](./database/README.md)
+Detaylı bilgi için: [database_README.md](./database_README.md)
 
 ### 4. Geliştirme Sunucusu
 
