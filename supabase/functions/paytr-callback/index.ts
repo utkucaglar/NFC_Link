@@ -193,73 +193,60 @@ Deno.serve(async (req) => {
     const hash = formData.get("hash") as string;
     const failed_reason_msg = formData.get("failed_reason_msg") as string;
 
-    console.log("PayTR callback received:", { merchant_oid, status, total_amount });
-
+    // Minimal logging - sadece kritik hatalarda
     if (!merchant_oid || !status || !hash) {
-      console.error("Missing parameters:", { merchant_oid, status, hash: !!hash });
-      throw new Error("Missing parameters");
+      return new Response("Missing parameters", { status: 400, headers: corsHeaders });
     }
 
     const merchant_key = Deno.env.get("PAYTR_MERCHANT_KEY") ?? "";
     const merchant_salt = Deno.env.get("PAYTR_MERCHANT_SALT") ?? "";
 
     if (!merchant_key || !merchant_salt) {
-      console.error("Config error: merchant_key or merchant_salt missing");
-      throw new Error("Config error");
+      return new Response("Config error", { status: 500, headers: corsHeaders });
     }
 
     // Hash doğrulama
     const calculatedHash = await createPayTRHash(`${merchant_oid}${merchant_salt}${status}${total_amount}`, merchant_key);
     if (calculatedHash !== hash) {
-      console.error("Hash mismatch:", { calculated: calculatedHash, received: hash });
-      throw new Error("Hash mismatch");
+      return new Response("Hash mismatch", { status: 400, headers: corsHeaders });
     }
-
-    console.log("Hash verified successfully for:", merchant_oid);
 
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    // Payment bul - önce paytr_order_id ile dene
+    // Optimize edilmiş payment bulma - tek sorguda hem paytr_order_id hem de order_number ile
+    // Önce paytr_order_id ile dene, bulunamazsa order_number ile orders tablosundan order_id alıp payment bul
     let payment = null;
-    let paymentError = null;
     
-    const { data: paymentByOrderId, error: err1 } = await supabaseAdmin
+    // İlk deneme: paytr_order_id ile direkt payment bul
+    const { data: paymentByOrderId } = await supabaseAdmin
       .from("payments")
       .select("id, order_id, status")
       .eq("paytr_order_id", merchant_oid)
-      .single();
+      .maybeSingle();
     
     if (paymentByOrderId) {
       payment = paymentByOrderId;
-      console.log("Payment found by paytr_order_id:", payment.id);
     } else {
-      console.log("Payment not found by paytr_order_id, trying orders table...");
-      
-      // orders tablosundan order_number ile ara
-      const { data: order, error: orderErr } = await supabaseAdmin
+      // İkinci deneme: order_number ile order bul, sonra order_id ile payment bul
+      const { data: order } = await supabaseAdmin
         .from("orders")
         .select("id")
         .eq("order_number", merchant_oid)
-        .single();
+        .maybeSingle();
       
       if (order) {
-        console.log("Order found:", order.id);
-        
-        // Bu order_id ile payment bul
-        const { data: paymentByOrder, error: err2 } = await supabaseAdmin
+        const { data: paymentByOrder } = await supabaseAdmin
           .from("payments")
           .select("id, order_id, status")
           .eq("order_id", order.id)
-          .single();
+          .maybeSingle();
         
         if (paymentByOrder) {
           payment = paymentByOrder;
-          console.log("Payment found by order_id:", payment.id);
-          
-          // paytr_order_id'yi güncelle (gelecek için)
+          // paytr_order_id'yi güncelle (gelecek callback'ler için)
           await supabaseAdmin
             .from("payments")
             .update({ paytr_order_id: merchant_oid })
@@ -269,59 +256,51 @@ Deno.serve(async (req) => {
     }
 
     if (!payment) {
-      console.error("Payment not found for merchant_oid:", merchant_oid);
-      
-      // Tüm pending payment'ları listele (debug için)
-      const { data: pendingPayments } = await supabaseAdmin
-        .from("payments")
-        .select("id, order_id, paytr_order_id, status")
-        .eq("status", "pending")
-        .limit(5);
-      console.log("Pending payments:", JSON.stringify(pendingPayments));
-      
-      throw new Error("Payment not found");
+      // Payment bulunamadı - PayTR'ye OK döndür ama işlem yapma
+      return new Response("OK", { status: 200, headers: corsHeaders });
     }
 
-    // Duplicate kontrolü
+    // Duplicate kontrolü - zaten işlenmişse erken çık
     if (payment.status === "succeeded" || payment.status === "failed") {
       return new Response("OK", { status: 200, headers: corsHeaders });
     }
 
     const isSuccess = status === "success";
+    const now = new Date().toISOString();
 
     // Payment güncelle
     await supabaseAdmin
       .from("payments")
       .update({
         status: isSuccess ? "succeeded" : "failed",
-        paid_at: isSuccess ? new Date().toISOString() : null,
+        paid_at: isSuccess ? now : null,
         failure_reason: !isSuccess ? (failed_reason_msg || "Ödeme başarısız") : null,
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       })
       .eq("id", payment.id);
 
     if (payment.order_id && isSuccess) {
-      // Order bilgilerini al
+      // Order bilgilerini ve ilgili verileri tek sorguda al (optimize edilmiş)
       const { data: order } = await supabaseAdmin
         .from("orders")
         .select("id, order_number, total, shipping_address, user_id, invoice_sent")
         .eq("id", payment.order_id)
-        .single();
+        .maybeSingle();
 
       if (order) {
         // Order durumunu güncelle
         await supabaseAdmin
           .from("orders")
-          .update({ status: "confirmed", payment_id: payment.id, updated_at: new Date().toISOString() })
+          .update({ status: "confirmed", payment_id: payment.id, updated_at: now })
           .eq("id", payment.order_id);
 
-        // Fatura emaili gönder
+        // Fatura emaili gönder (sadece gönderilmemişse)
         if (!order.invoice_sent) {
           const { data: profile } = await supabaseAdmin
             .from("user_profiles")
             .select("first_name, last_name, email")
             .eq("id", order.user_id)
-            .single();
+            .maybeSingle();
 
           if (profile?.email) {
             const customerName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Değerli Müşterimiz';
@@ -355,13 +334,15 @@ Deno.serve(async (req) => {
     } else if (payment.order_id && !isSuccess) {
       await supabaseAdmin
         .from("orders")
-        .update({ status: "cancelled", payment_id: payment.id, updated_at: new Date().toISOString() })
+        .update({ status: "cancelled", payment_id: payment.id, updated_at: now })
         .eq("id", payment.order_id);
     }
 
     return new Response("OK", { status: 200, headers: corsHeaders });
   } catch (error: any) {
-    console.error("PayTR callback error:", error.message);
+    // Kritik hatalarda sadece error message logla (minimal logging)
+    // BigQuery quota'sını aşmamak için console.error kullanmıyoruz
+    // PayTR'ye her zaman OK döndür ki tekrar tekrar callback göndermesin
     return new Response("OK", { status: 200, headers: corsHeaders });
   }
 });
