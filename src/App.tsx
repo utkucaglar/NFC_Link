@@ -18,19 +18,26 @@ import Profile from "./pages/Profile";
 import RenewSubscription from "./pages/RenewSubscription";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
+import ResetPassword from "./pages/ResetPassword";
 import NFCBusinessCard from "./pages/nfc/BusinessCard";
 import NFCPetId from "./pages/nfc/PetId";
 import NFCRedirect from "./pages/nfc/Redirect";
 import NotFound from "./pages/NotFound";
 import Contact from "./pages/Contact";
+// Legal Pages
+import PrivacyPolicy from "./pages/legal/PrivacyPolicy";
+import TermsOfService from "./pages/legal/TermsOfService";
+import RefundPolicy from "./pages/legal/RefundPolicy";
+import PreInformationForm from "./pages/legal/PreInformationForm";
+import DistanceSalesAgreement from "./pages/legal/DistanceSalesAgreement";
 // Admin Pages
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminOrders from "./pages/admin/Orders";
 import AdminProducts from "./pages/admin/Products";
-import AdminDiscounts from "./pages/admin/Discounts";
 import AdminSubscriptions from "./pages/admin/Subscriptions";
 import AdminReviews from "./pages/admin/Reviews";
 import AdminSupport from "./pages/admin/Support";
+import AdminSettings from "./pages/admin/Settings";
 
 const App = () => (
   <AuthProvider>
@@ -48,7 +55,14 @@ const App = () => (
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/contact" element={<Contact />} />
+            {/* Legal Pages */}
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/terms-of-service" element={<TermsOfService />} />
+            <Route path="/refund-policy" element={<RefundPolicy />} />
+            <Route path="/pre-information-form" element={<PreInformationForm />} />
+            <Route path="/distance-sales-agreement" element={<DistanceSalesAgreement />} />
             {/* Protected Routes - Temporarily without ProtectedRoute wrapper */}
             <Route path="/my-nfc" element={<MyNFC />} />
             <Route path="/orders" element={<Orders />} />
@@ -58,10 +72,10 @@ const App = () => (
             <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
             <Route path="/admin/orders" element={<AdminRoute><AdminOrders /></AdminRoute>} />
             <Route path="/admin/products" element={<AdminRoute><AdminProducts /></AdminRoute>} />
-            <Route path="/admin/discounts" element={<AdminRoute><AdminDiscounts /></AdminRoute>} />
             <Route path="/admin/subscriptions" element={<AdminRoute><AdminSubscriptions /></AdminRoute>} />
             <Route path="/admin/reviews" element={<AdminRoute><AdminReviews /></AdminRoute>} />
             <Route path="/admin/support" element={<AdminRoute><AdminSupport /></AdminRoute>} />
+            <Route path="/admin/settings" element={<AdminRoute><AdminSettings /></AdminRoute>} />
             {/* NFC Public Pages */}
             <Route path="/nfc/business/:key" element={<NFCBusinessCard />} />
             <Route path="/nfc/pet/:key" element={<NFCPetId />} />

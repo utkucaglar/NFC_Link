@@ -14,6 +14,8 @@ import {
   ArrowDown,
   Pencil,
   Check,
+  Upload,
+  Image as ImageIcon,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,7 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getProductImage, formatPrice } from "@/lib/helpers";
+import Editor, { Toolbar, BtnBold, BtnItalic, BtnUnderline, BtnBulletList, BtnNumberedList } from "react-simple-wysiwyg";
 
 interface Category {
   id: number;
@@ -39,7 +42,7 @@ interface Category {
   is_active: boolean;
 }
 
-type NFCType = "business-card" | "pet-id" | "redirect" | null;
+type NFCType = "business-card" | "pet-id" | "redirect" | "nfc-yok" | null;
 
 interface Product {
   id: number;
@@ -56,11 +59,18 @@ interface Product {
   colors: string[] | null;
   specs: Record<string, string> | null;
   monthly_subscription_fee: number;
+  free_subscription_months: number;
+  has_subscription: boolean;
   stock_quantity: number;
   sku: string | null;
   is_active: boolean;
   sort_order: number;
   nfc_type: NFCType;
+  // İndirim alanları
+  discount_percentage: number;
+  is_discounted: boolean;
+  discount_start_date: string | null;
+  discount_end_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -69,6 +79,7 @@ const NFC_TYPE_OPTIONS = [
   { value: "business-card", label: "Dijital Kartvizit", description: "İsim, telefon, sosyal medya bilgileri" },
   { value: "pet-id", label: "Evcil Hayvan Kimliği", description: "Hayvan bilgileri, sahip iletişimi" },
   { value: "redirect", label: "Özel Yönlendirme", description: "Sevgililer sayfası, galeri, anılar" },
+  { value: "nfc-yok", label: "NFC Yok", description: "NFC sistemi olmayan ürünler (abonelik yok)" },
 ];
 
 const emptyProduct: Partial<Product> = {
@@ -84,11 +95,18 @@ const emptyProduct: Partial<Product> = {
   colors: [],
   specs: {},
   monthly_subscription_fee: 29,
+  free_subscription_months: 1,
+  has_subscription: true,
   stock_quantity: 0,
   sku: "",
   is_active: true,
   sort_order: 0,
   nfc_type: null,
+  // İndirim varsayılanları
+  discount_percentage: 0,
+  is_discounted: false,
+  discount_start_date: null,
+  discount_end_date: null,
 };
 
 export default function AdminProducts() {
@@ -102,7 +120,7 @@ export default function AdminProducts() {
   const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"basic" | "details" | "specs">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "details" | "specs" | "discount">("basic");
   
   // Feature, color, spec ekleme için state'ler
   const [newFeature, setNewFeature] = useState("");
@@ -118,10 +136,36 @@ export default function AdminProducts() {
   const [editingSpecKey, setEditingSpecKey] = useState<string | null>(null);
   const [editingSpecKeyValue, setEditingSpecKeyValue] = useState("");
   const [editingSpecValueValue, setEditingSpecValueValue] = useState("");
+  
+  // Image upload state'leri
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  
+  // Renk bazlı görsel state'leri - her renk için birden fazla görsel
+  interface ColorImage {
+    id?: number; // Veritabanından gelen ID (varsa)
+    image_url: string;
+    sort_order: number;
+    tempId?: string; // Yeni eklenen görseller için geçici ID
+  }
+  const [colorImages, setColorImages] = useState<Record<string, ColorImage[]>>({});
+  const [uploadingColorImages, setUploadingColorImages] = useState<Record<string, boolean>>({});
+  const [colorImagePreviews, setColorImagePreviews] = useState<Record<string, Record<string, string>>>({});
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Ürün düzenlenirken renk görsellerini yükle
+  useEffect(() => {
+    if (editingProduct?.id) {
+      loadColorImages(editingProduct.id);
+    } else {
+      setColorImages({});
+      setColorImagePreviews({});
+    }
+  }, [editingProduct?.id]);
 
   const fetchData = async () => {
     try {
@@ -151,6 +195,318 @@ export default function AdminProducts() {
     }
   };
 
+  // Dosya yükleme fonksiyonu
+  const uploadImageFile = async (file: File): Promise<string | null> => {
+    try {
+      setUploadingImage(true);
+      
+      // Ürün ID'si varsa onu kullan, yoksa geçici bir ID oluştur
+      const productId = editingProduct?.id || `temp-${Date.now()}`;
+      const fileExt = file.name.split('.').pop();
+      const fileName = `products/${productId}/${Date.now()}.${fileExt}`;
+      
+      // Önce eski görseli sil (düzenleme durumunda)
+      if (editingProduct?.id && editingProduct?.image_url) {
+        const oldUrl = editingProduct.image_url;
+        // Supabase storage URL'i ise dosya yolunu çıkar
+        if (oldUrl.includes('/storage/v1/object/public/')) {
+          const pathMatch = oldUrl.match(/\/storage\/v1\/object\/public\/product-images\/(.+)/);
+          if (pathMatch) {
+            await supabase.storage.from("product-images").remove([pathMatch[1]]);
+          }
+        }
+      }
+      
+      const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+      
+      if (uploadError) throw uploadError;
+      
+      const { data: urlData } = supabase.storage.from("product-images").getPublicUrl(fileName);
+      
+      return urlData.publicUrl;
+    } catch (error: any) {
+      console.error("Görsel yükleme hatası:", error);
+      throw error;
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  // Dosya seçildiğinde preview oluştur
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Dosya tipi kontrolü
+      if (!file.type.startsWith('image/')) {
+        toast.error("Lütfen bir resim dosyası seçin");
+        return;
+      }
+      
+      // Dosya boyutu kontrolü (10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error("Dosya boyutu 10MB'dan küçük olmalıdır");
+        return;
+      }
+      
+      setSelectedFile(file);
+      
+      // Preview oluştur
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Renk bazlı görsel yükleme - birden fazla görsel eklenebilir
+  const handleColorImageSelect = async (color: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    console.log("handleColorImageSelect called", { color, files: e.target.files });
+    const file = e.target.files?.[0];
+    if (!file) {
+      console.log("No file selected");
+      // Input'u resetle
+      e.target.value = '';
+      return;
+    }
+    
+    console.log("File selected:", { name: file.name, size: file.size, type: file.type });
+
+    // Dosya tipi kontrolü
+    if (!file.type.startsWith('image/')) {
+      toast.error("Lütfen bir resim dosyası seçin");
+      e.target.value = '';
+      return;
+    }
+    
+    // Dosya boyutu kontrolü (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("Dosya boyutu 10MB'dan küçük olmalıdır");
+      e.target.value = '';
+      return;
+    }
+
+    // Preview oluştur
+    const tempId = `temp-${Date.now()}-${Math.random()}`;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setColorImagePreviews(prev => ({
+        ...prev,
+        [color]: {
+          ...(prev[color] || {}),
+          [tempId]: reader.result as string
+        }
+      }));
+    };
+    reader.readAsDataURL(file);
+
+    // Görseli yükle
+    try {
+      setUploadingColorImages(prev => ({ ...prev, [color]: true }));
+      
+      const productId = editingProduct?.id || `temp-${Date.now()}`;
+      const fileExt = file.name.split('.').pop();
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(7);
+      
+      // Renk adını URL-safe hale getir (boşlukları tire ile değiştir, Türkçe karakterleri normalize et)
+      const sanitizeColorName = (colorName: string): string => {
+        return colorName
+          .toLowerCase()
+          .normalize('NFD') // Türkçe karakterleri normalize et (ş -> s + ̧)
+          .replace(/[\u0300-\u036f]/g, '') // Diyakritik işaretleri kaldır
+          .replace(/[^a-z0-9]+/g, '-') // Özel karakterleri ve boşlukları tire ile değiştir
+          .replace(/^-+|-+$/g, ''); // Başta ve sonda tire varsa kaldır
+      };
+      
+      const safeColorName = sanitizeColorName(color);
+      const fileName = `products/${productId}/colors/${safeColorName}/${timestamp}-${random}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+      
+      if (uploadError) {
+        console.error("Upload error:", uploadError);
+        throw uploadError;
+      }
+      
+      const { data: urlData } = supabase.storage.from("product-images").getPublicUrl(fileName);
+      
+      if (!urlData?.publicUrl) {
+        throw new Error("Görsel URL'i alınamadı");
+      }
+      
+      // Array'e ekle
+      setColorImages(prev => {
+        const currentImages = prev[color] || [];
+        const maxSortOrder = currentImages.length > 0 
+          ? Math.max(...currentImages.map(img => img.sort_order))
+          : -1;
+        
+        const newImage = {
+          image_url: urlData.publicUrl,
+          sort_order: maxSortOrder + 1,
+          tempId
+        };
+        
+        console.log(`Adding image to ${color}:`, newImage);
+        console.log(`Current images for ${color}:`, currentImages);
+        
+        return {
+          ...prev,
+          [color]: [
+            ...currentImages,
+            newImage
+          ]
+        };
+      });
+      
+      toast.success(`${color} rengi için görsel yüklendi`);
+    } catch (error: any) {
+      console.error("Renk görseli yükleme hatası:", error);
+      toast.error(`${color} rengi için görsel yüklenemedi: ${error.message || 'Bilinmeyen hata'}`);
+      // Preview'ı da sil
+      setColorImagePreviews(prev => {
+        const newPreviews = { ...prev };
+        if (newPreviews[color]) {
+          delete newPreviews[color][tempId];
+        }
+        return newPreviews;
+      });
+    } finally {
+      setUploadingColorImages(prev => ({ ...prev, [color]: false }));
+      // Input'u resetle - aynı dosyayı tekrar seçebilmek için
+      e.target.value = '';
+    }
+  };
+
+
+  // Belirli bir renk görselini sil
+  const removeColorImage = async (color: string, imageIndex: number) => {
+    const images = colorImages[color] || [];
+    const imageToRemove = images[imageIndex];
+    if (!imageToRemove) return;
+
+    try {
+      // Eğer ürün kaydedilmişse ve görsel Supabase storage'da ise sil
+      if (editingProduct?.id && imageToRemove.id && imageToRemove.image_url.includes('/storage/v1/object/public/')) {
+        const pathMatch = imageToRemove.image_url.match(/\/storage\/v1\/object\/public\/product-images\/(.+)/);
+        if (pathMatch) {
+          await supabase.storage.from("product-images").remove([pathMatch[1]]);
+        }
+
+        // product_images tablosundan sil
+        await supabase
+          .from("product_images")
+          .delete()
+          .eq("id", imageToRemove.id);
+      } else if (imageToRemove.image_url.includes('/storage/v1/object/public/')) {
+        // Henüz kaydedilmemiş ama yüklenmiş görsel
+        const pathMatch = imageToRemove.image_url.match(/\/storage\/v1\/object\/public\/product-images\/(.+)/);
+        if (pathMatch) {
+          await supabase.storage.from("product-images").remove([pathMatch[1]]);
+        }
+      }
+
+      // State'ten sil
+      setColorImages(prev => {
+        const newImages = { ...prev };
+        if (newImages[color]) {
+          newImages[color] = newImages[color].filter((_, idx) => idx !== imageIndex);
+          if (newImages[color].length === 0) {
+            delete newImages[color];
+          }
+        }
+        return newImages;
+      });
+
+      // Preview'ı da sil
+      if (imageToRemove.tempId) {
+        setColorImagePreviews(prev => {
+          const newPreviews = { ...prev };
+          if (newPreviews[color]) {
+            delete newPreviews[color][imageToRemove.tempId!];
+          }
+          return newPreviews;
+        });
+      }
+
+      toast.success("Görsel silindi");
+    } catch (error) {
+      console.error("Renk görseli silme hatası:", error);
+      toast.error("Görsel silinemedi");
+    }
+  };
+
+  // Görsel sıralamasını değiştir
+  const moveColorImage = (color: string, imageIndex: number, direction: 'up' | 'down') => {
+    setColorImages(prev => {
+      const images = [...(prev[color] || [])];
+      const newIndex = direction === 'up' ? imageIndex - 1 : imageIndex + 1;
+      
+      if (newIndex < 0 || newIndex >= images.length) return prev;
+      
+      // sort_order'ları değiştir
+      const temp = images[imageIndex].sort_order;
+      images[imageIndex].sort_order = images[newIndex].sort_order;
+      images[newIndex].sort_order = temp;
+      
+      // Array'i yeniden sırala
+      images.sort((a, b) => a.sort_order - b.sort_order);
+      
+      return {
+        ...prev,
+        [color]: images
+      };
+    });
+  };
+
+  // Ürün düzenlenirken renk görsellerini yükle
+  const loadColorImages = async (productId: number) => {
+    try {
+      const { data, error } = await supabase
+        .from("product_images")
+        .select("id, color, image_url, sort_order")
+        .eq("product_id", productId)
+        .order("sort_order", { ascending: true });
+
+      if (error) throw error;
+
+      const imagesMap: Record<string, ColorImage[]> = {};
+      data?.forEach(item => {
+        if (!imagesMap[item.color]) {
+          imagesMap[item.color] = [];
+        }
+        imagesMap[item.color].push({
+          id: item.id,
+          image_url: item.image_url,
+          sort_order: item.sort_order
+        });
+      });
+
+      setColorImages(imagesMap);
+      
+      // Preview'ları da ayarla
+      const previewsMap: Record<string, Record<string, string>> = {};
+      Object.entries(imagesMap).forEach(([color, images]) => {
+        previewsMap[color] = {};
+        images.forEach(img => {
+          if (img.tempId) {
+            previewsMap[color][img.tempId] = img.image_url;
+          }
+        });
+      });
+      setColorImagePreviews(previewsMap);
+    } catch (error) {
+      console.error("Renk görselleri yüklenemedi:", error);
+    }
+  };
+
   const handleSave = async () => {
     if (!editingProduct?.name || !editingProduct?.price || !editingProduct?.category) {
       toast.error("Lütfen zorunlu alanları doldurun (Ad, Fiyat, Kategori)");
@@ -159,6 +515,20 @@ export default function AdminProducts() {
 
     setSaving(true);
     try {
+      let imageUrl = editingProduct.image_url || null;
+      
+      // Dosya seçilmişse yükle
+      if (selectedFile) {
+        const uploadedUrl = await uploadImageFile(selectedFile);
+        if (uploadedUrl) {
+          imageUrl = uploadedUrl;
+        } else {
+          toast.error("Görsel yüklenemedi");
+          return;
+        }
+      }
+
+      const hasSub = editingProduct.has_subscription !== false && editingProduct.nfc_type !== "nfc-yok";
       const productData = {
         name: editingProduct.name,
         description: editingProduct.description || null,
@@ -167,18 +537,27 @@ export default function AdminProducts() {
         price: editingProduct.price,
         category: editingProduct.category,
         category_id: editingProduct.category_id || null,
-        image_url: editingProduct.image_url || null,
+        image_url: imageUrl,
         features: editingProduct.features || null,
         colors: editingProduct.colors || null,
         specs: editingProduct.specs || null,
-        monthly_subscription_fee: editingProduct.monthly_subscription_fee || 29,
+        monthly_subscription_fee: hasSub ? (editingProduct.monthly_subscription_fee ?? 29) : 0,
+        free_subscription_months: hasSub ? (editingProduct.free_subscription_months ?? 1) : 0,
+        has_subscription: hasSub,
         stock_quantity: editingProduct.stock_quantity || 0,
         sku: editingProduct.sku || null,
         is_active: editingProduct.is_active ?? true,
         sort_order: editingProduct.sort_order || 0,
         nfc_type: editingProduct.nfc_type || null,
+        // İndirim alanları
+        discount_percentage: editingProduct.discount_percentage || 0,
+        is_discounted: editingProduct.is_discounted ?? false,
+        discount_start_date: editingProduct.discount_start_date || null,
+        discount_end_date: editingProduct.discount_end_date || null,
         updated_at: new Date().toISOString(),
       };
+
+      let savedProductId: number;
 
       if (editingProduct.id) {
         const { error } = await supabase
@@ -187,21 +566,76 @@ export default function AdminProducts() {
           .eq("id", editingProduct.id);
 
         if (error) throw error;
+        savedProductId = editingProduct.id;
         toast.success("Ürün güncellendi");
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from("products")
           .insert({
             ...productData,
             created_at: new Date().toISOString(),
-          });
+          })
+          .select("id")
+          .single();
 
         if (error) throw error;
+        savedProductId = data.id;
         toast.success("Ürün oluşturuldu");
+      }
+
+      // Renk görsellerini kaydet - her renk için birden fazla görsel
+      if (Object.keys(colorImages).length > 0 && savedProductId) {
+        // Önce bu ürünün tüm mevcut görsellerini sil
+        await supabase
+          .from("product_images")
+          .delete()
+          .eq("product_id", savedProductId);
+
+        // Tüm renk görsellerini ekle
+        const colorImageEntries: Array<{
+          product_id: number;
+          color: string;
+          image_url: string;
+          sort_order: number;
+        }> = [];
+
+        Object.entries(colorImages).forEach(([color, images]) => {
+          images.forEach((img, index) => {
+            colorImageEntries.push({
+              product_id: savedProductId,
+              color,
+              image_url: img.image_url,
+              sort_order: img.sort_order !== undefined ? img.sort_order : index,
+            });
+          });
+        });
+
+        if (colorImageEntries.length > 0) {
+          const { error: imagesError } = await supabase
+            .from("product_images")
+            .insert(colorImageEntries);
+
+          if (imagesError) {
+            console.error("Renk görselleri kaydedilemedi:", imagesError);
+            toast.error("Renk görselleri kaydedilemedi");
+          } else {
+            toast.success(`${colorImageEntries.length} görsel kaydedildi`);
+          }
+        }
+      } else if (savedProductId && Object.keys(colorImages).length === 0) {
+        // Eğer hiç görsel yoksa, mevcut görselleri sil
+        await supabase
+          .from("product_images")
+          .delete()
+          .eq("product_id", savedProductId);
       }
 
       setShowModal(false);
       setEditingProduct(null);
+      setSelectedFile(null);
+      setImagePreview(null);
+      setColorImages({});
+      setColorImagePreviews({});
       setActiveTab("basic");
       fetchData();
     } catch (error: any) {
@@ -214,6 +648,41 @@ export default function AdminProducts() {
 
   const handleDelete = async (productId: number) => {
     try {
+      // Önce bu ürünün siparişlerde kullanılıp kullanılmadığını kontrol et
+      const { data: orderItems, error: checkError } = await supabase
+        .from("order_items")
+        .select("id, order_id")
+        .eq("product_id", productId)
+        .limit(1);
+
+      if (checkError) {
+        console.error("Kontrol hatası:", checkError);
+      }
+
+      // Eğer siparişlerde kullanılıyorsa
+      if (orderItems && orderItems.length > 0) {
+        toast.error(
+          "Bu ürün siparişlerde kullanıldığı için silinemez. Ürünü pasif yapabilirsiniz.",
+          {
+            duration: 5000,
+          }
+        );
+        setDeleteConfirm(null);
+        return;
+      }
+
+      // Ürün görsellerini de sil
+      const { error: imagesError } = await supabase
+        .from("product_images")
+        .delete()
+        .eq("product_id", productId);
+
+      if (imagesError) {
+        console.error("Görsel silme hatası:", imagesError);
+        // Devam et, görsel silme hatası kritik değil
+      }
+
+      // Ürünü sil
       const { error } = await supabase
         .from("products")
         .delete()
@@ -224,9 +693,21 @@ export default function AdminProducts() {
       setProducts(products.filter(p => p.id !== productId));
       toast.success("Ürün silindi");
       setDeleteConfirm(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Silme hatası:", error);
-      toast.error("Ürün silinemedi");
+      
+      // Foreign key hatası kontrolü
+      if (error?.code === "23503" || error?.message?.includes("foreign key")) {
+        toast.error(
+          "Bu ürün siparişlerde kullanıldığı için silinemez. Ürünü pasif yapabilirsiniz.",
+          {
+            duration: 5000,
+          }
+        );
+      } else {
+        toast.error(`Ürün silinemedi: ${error?.message || "Bilinmeyen hata"}`);
+      }
+      setDeleteConfirm(null);
     }
   };
 
@@ -482,6 +963,8 @@ export default function AdminProducts() {
               onClick={() => {
                 setEditingProduct(emptyProduct);
                 setActiveTab("basic");
+                setSelectedFile(null);
+                setImagePreview(null);
                 setShowModal(true);
               }}
             >
@@ -559,6 +1042,13 @@ export default function AdminProducts() {
                     <Badge variant="secondary">Pasif</Badge>
                   </div>
                 )}
+                {product.is_discounted && product.discount_percentage > 0 && (
+                  <div className="absolute top-2 left-2">
+                    <Badge className="bg-red-500 text-white font-bold">
+                      %{product.discount_percentage} İNDİRİM
+                    </Badge>
+                  </div>
+                )}
               </div>
 
               <div className="p-4">
@@ -577,9 +1067,22 @@ export default function AdminProducts() {
                 </p>
 
                 <div className="flex items-center justify-between">
-                  <span className="text-xl font-bold text-gradient">
-                    ₺{product.price.toLocaleString("tr-TR")}
-                  </span>
+                  <div>
+                    {product.is_discounted && product.discount_percentage > 0 ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground line-through">
+                          ₺{product.price.toLocaleString("tr-TR")}
+                        </span>
+                        <span className="text-xl font-bold text-green-600">
+                          ₺{(product.price * (1 - product.discount_percentage / 100)).toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-xl font-bold text-gradient">
+                        ₺{product.price.toLocaleString("tr-TR")}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       size="icon"
@@ -604,6 +1107,8 @@ export default function AdminProducts() {
                           specs: product.specs || {},
                         });
                         setActiveTab("basic");
+                        setSelectedFile(null);
+                        setImagePreview(null);
                         setShowModal(true);
                       }}
                     >
@@ -646,7 +1151,7 @@ export default function AdminProducts() {
           </DialogHeader>
 
           {/* Tabs */}
-          <div className="flex gap-2 border-b border-border pb-4">
+          <div className="flex gap-2 border-b border-border pb-4 flex-wrap">
             <Button
               variant={activeTab === "basic" ? "default" : "ghost"}
               size="sm"
@@ -667,6 +1172,17 @@ export default function AdminProducts() {
               onClick={() => setActiveTab("specs")}
             >
               Teknik Bilgiler
+            </Button>
+            <Button
+              variant={activeTab === "discount" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab("discount")}
+              className={editingProduct?.is_discounted ? "text-green-600" : ""}
+            >
+              İndirim
+              {editingProduct?.is_discounted && (
+                <span className="ml-1 w-2 h-2 rounded-full bg-green-500" />
+              )}
             </Button>
           </div>
 
@@ -702,11 +1218,14 @@ export default function AdminProducts() {
                         } else if (catName.includes("yönlendirme") || catName.includes("özel")) {
                           autoNfcType = "redirect";
                         }
+                        const newNfcType = editingProduct?.nfc_type || autoNfcType;
+                        const isNfcYok = newNfcType === "nfc-yok";
                         setEditingProduct({ 
                           ...editingProduct, 
                           category: e.target.value,
                           category_id: cat?.id || null,
-                          nfc_type: editingProduct?.nfc_type || autoNfcType
+                          nfc_type: newNfcType,
+                          has_subscription: isNfcYok ? false : (editingProduct?.has_subscription ?? true),
                         });
                       }}
                       className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
@@ -723,10 +1242,15 @@ export default function AdminProducts() {
                     <select
                       id="nfc_type"
                       value={editingProduct?.nfc_type || ""}
-                      onChange={(e) => setEditingProduct({ 
-                        ...editingProduct, 
-                        nfc_type: (e.target.value as NFCType) || null 
-                      })}
+                      onChange={(e) => {
+                        const v = (e.target.value as NFCType) || null;
+                        const isNfcYok = v === "nfc-yok";
+                        setEditingProduct({ 
+                          ...editingProduct, 
+                          nfc_type: v,
+                          has_subscription: isNfcYok ? false : (editingProduct?.has_subscription ?? true),
+                        });
+                      }}
                       className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     >
                       <option value="">Seçin...</option>
@@ -737,6 +1261,23 @@ export default function AdminProducts() {
                     <p className="text-xs text-muted-foreground mt-1">
                       {NFC_TYPE_OPTIONS.find(o => o.value === editingProduct?.nfc_type)?.description || "Ürünün NFC sayfası tipini belirler"}
                     </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      id="has_subscription"
+                      checked={editingProduct?.nfc_type === "nfc-yok" ? false : (editingProduct?.has_subscription ?? true)}
+                      onCheckedChange={(checked) => setEditingProduct({ ...editingProduct, has_subscription: checked })}
+                      disabled={editingProduct?.nfc_type === "nfc-yok"}
+                    />
+                    <div>
+                      <Label htmlFor="has_subscription" className="cursor-pointer">Abonelik Var</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {editingProduct?.nfc_type === "nfc-yok" 
+                          ? "NFC yok ürünlerde abonelik olmaz" 
+                          : "Aylık abonelik ücreti uygulanacak"}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -762,16 +1303,34 @@ export default function AdminProducts() {
                     />
                   </div>
 
-                  <div>
-                    <Label htmlFor="subscription">Aylık Abonelik (₺)</Label>
-                    <Input
-                      id="subscription"
-                      type="number"
-                      value={editingProduct?.monthly_subscription_fee || ""}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, monthly_subscription_fee: parseFloat(e.target.value) || 0 })}
-                      placeholder="29"
-                    />
-                  </div>
+                  {(editingProduct?.has_subscription !== false && editingProduct?.nfc_type !== "nfc-yok") && (
+                  <>
+                    <div>
+                      <Label htmlFor="subscription">Aylık Abonelik (₺)</Label>
+                      <Input
+                        id="subscription"
+                        type="number"
+                        value={editingProduct?.monthly_subscription_fee ?? ""}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, monthly_subscription_fee: parseFloat(e.target.value) || 0 })}
+                        placeholder="29"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="free_months">Bedava Abonelik (Ay)</Label>
+                      <Input
+                        id="free_months"
+                        type="number"
+                        min="0"
+                        value={editingProduct?.free_subscription_months ?? 1}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, free_subscription_months: parseInt(e.target.value) || 0 })}
+                        placeholder="1"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Ürün satın alındığında kaç ay bedava abonelik verilecek
+                      </p>
+                    </div>
+                  </>
+                  )}
 
                   <div>
                     <Label htmlFor="stock">Stok Miktarı</Label>
@@ -797,19 +1356,84 @@ export default function AdminProducts() {
                 </div>
 
                 <div>
-                  <Label htmlFor="image">Görsel URL</Label>
-                  <Input
-                    id="image"
-                    value={editingProduct?.image_url || ""}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })}
-                    placeholder="https://example.com/image.jpg"
-                  />
-                  <div className="mt-2 w-24 h-24 rounded-lg overflow-hidden bg-muted">
-                    <img
-                      src={getProductImage(editingProduct?.image_url || null, editingProduct?.category || "")}
-                      alt="Preview"
-                      className="w-full h-full object-contain p-2"
-                    />
+                  <Label className="mb-3 block">Ürün Görseli</Label>
+                  
+                  {/* File Input */}
+                  <div>
+                    <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
+                      <input
+                        type="file"
+                        id="file-upload"
+                        accept="image/*"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="file-upload"
+                        className="cursor-pointer flex flex-col items-center gap-2"
+                      >
+                        {imagePreview ? (
+                          <>
+                            <img
+                              src={imagePreview}
+                              alt="Preview"
+                              className="w-32 h-32 object-contain rounded-lg mb-2"
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              {selectedFile?.name}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setSelectedFile(null);
+                                setImagePreview(null);
+                                const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+                                if (fileInput) fileInput.value = "";
+                              }}
+                            >
+                              Değiştir
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <ImageIcon className="w-12 h-12 text-muted-foreground mb-2" />
+                            <p className="text-sm font-medium">Dosya seçmek için tıklayın</p>
+                            <p className="text-xs text-muted-foreground">
+                              PNG, JPG, WEBP (Max 10MB)
+                            </p>
+                          </>
+                        )}
+                      </label>
+                    </div>
+                    {uploadingImage && (
+                      <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        Görsel yükleniyor...
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Preview */}
+                  <div className="mt-4">
+                    <Label className="text-sm text-muted-foreground mb-2 block">Önizleme</Label>
+                    <div className="w-32 h-32 rounded-lg overflow-hidden bg-muted border border-border">
+                      {imagePreview ? (
+                        <img
+                          src={imagePreview}
+                          alt="Preview"
+                          className="w-full h-full object-contain p-2"
+                        />
+                      ) : (
+                        <img
+                          src={getProductImage(editingProduct?.image_url || null, editingProduct?.category || "")}
+                          alt="Preview"
+                          className="w-full h-full object-contain p-2"
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -836,13 +1460,24 @@ export default function AdminProducts() {
 
                 <div>
                   <Label htmlFor="long_description">Detaylı Açıklama</Label>
-                  <textarea
-                    id="long_description"
-                    value={editingProduct?.long_description || ""}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, long_description: e.target.value })}
-                    placeholder="Ürün detay sayfasında görünecek uzun açıklama..."
-                    className="w-full min-h-[120px] p-3 rounded-md border border-input bg-background text-sm resize-none"
-                  />
+                  <p className="text-xs text-muted-foreground mb-2">Kalın, italik, altı çizili ve liste kullanabilirsiniz. Satır atlamalar müşteri sayfasında korunur.</p>
+                  <div className="rounded-md border border-input bg-background overflow-hidden [&_.rsw-editor]:min-h-[120px] [&_.rsw-editor]:p-3 [&_.rsw-editor]:text-sm [&_.rsw-toolbar]:border-b [&_.rsw-toolbar]:border-input [&_.rsw-toolbar]:bg-muted/30 [&_.rsw-toolbar_button]:p-2">
+                    <Editor
+                      id="long_description"
+                      value={editingProduct?.long_description || ""}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, long_description: e.target.value })}
+                      placeholder="Ürün detay sayfasında görünecek uzun açıklama..."
+                      containerProps={{ className: "w-full" }}
+                    >
+                      <Toolbar>
+                        <BtnBold />
+                        <BtnItalic />
+                        <BtnUnderline />
+                        <BtnBulletList />
+                        <BtnNumberedList />
+                      </Toolbar>
+                    </Editor>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between p-4 bg-muted/30 rounded-xl">
@@ -948,67 +1583,185 @@ export default function AdminProducts() {
                   <Label className="mb-3 block">Renk Seçenekleri</Label>
                   <div className="space-y-2 mb-3">
                     {(editingProduct?.colors || []).map((color, index) => (
-                      <div key={index} className="flex items-center gap-2 bg-muted/30 rounded-lg p-2 group">
-                        {/* Sıralama butonları */}
-                        <div className="flex flex-col gap-0.5">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="w-6 h-6 opacity-50 hover:opacity-100"
-                            onClick={() => moveColor(index, 'up')}
-                            disabled={index === 0}
-                          >
-                            <ArrowUp className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="w-6 h-6 opacity-50 hover:opacity-100"
-                            onClick={() => moveColor(index, 'down')}
-                            disabled={index === (editingProduct?.colors?.length || 0) - 1}
-                          >
-                            <ArrowDown className="w-3 h-3" />
-                          </Button>
-                        </div>
-                        
-                        {/* İçerik - düzenleme modu */}
-                        {editingColorIndex === index ? (
-                          <div className="flex-1 flex gap-2">
-                            <Input
-                              value={editingColorValue}
-                              onChange={(e) => setEditingColorValue(e.target.value)}
-                              onKeyDown={(e) => e.key === "Enter" && saveEditColor()}
-                              autoFocus
-                              className="flex-1"
-                            />
-                            <Button size="icon" variant="ghost" className="w-8 h-8 text-green-600" onClick={saveEditColor}>
-                              <Check className="w-4 h-4" />
+                      <div key={index} className="space-y-2">
+                        <div className="flex items-center gap-2 bg-muted/30 rounded-lg p-2 group">
+                          {/* Sıralama butonları */}
+                          <div className="flex flex-col gap-0.5">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-6 h-6 opacity-50 hover:opacity-100"
+                              onClick={() => moveColor(index, 'up')}
+                              disabled={index === 0}
+                            >
+                              <ArrowUp className="w-3 h-3" />
                             </Button>
-                            <Button size="icon" variant="ghost" className="w-8 h-8" onClick={() => setEditingColorIndex(null)}>
-                              <X className="w-4 h-4" />
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-6 h-6 opacity-50 hover:opacity-100"
+                              onClick={() => moveColor(index, 'down')}
+                              disabled={index === (editingProduct?.colors?.length || 0) - 1}
+                            >
+                              <ArrowDown className="w-3 h-3" />
                             </Button>
                           </div>
-                        ) : (
-                          <>
-                            <span className="flex-1 text-sm font-medium">{color}</span>
+                          
+                          {/* İçerik - düzenleme modu */}
+                          {editingColorIndex === index ? (
+                            <div className="flex-1 flex gap-2">
+                              <Input
+                                value={editingColorValue}
+                                onChange={(e) => setEditingColorValue(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && saveEditColor()}
+                                autoFocus
+                                className="flex-1"
+                              />
+                              <Button size="icon" variant="ghost" className="w-8 h-8 text-green-600" onClick={saveEditColor}>
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="w-8 h-8" onClick={() => setEditingColorIndex(null)}>
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="flex-1 text-sm font-medium">{color}</span>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={() => startEditColor(index)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="w-8 h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={() => removeColor(index)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                        
+                        {/* Renk görseli yükleme - birden fazla görsel */}
+                        <div className="ml-8 bg-muted/20 rounded-lg p-3 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-muted-foreground">{color} rengi için görseller</Label>
+                            <span className="text-xs text-muted-foreground">
+                              {(colorImages[color] || []).length} görsel
+                            </span>
+                          </div>
+                          
+                          {/* Mevcut görseller listesi */}
+                          {(colorImages[color] || []).length > 0 && (
+                            <div className="space-y-2">
+                              {colorImages[color].map((img, imgIndex) => {
+                                const previewUrl = img.tempId 
+                                  ? (colorImagePreviews[color]?.[img.tempId] || img.image_url)
+                                  : img.image_url;
+                                
+                                return (
+                                  <div key={img.id || img.tempId || imgIndex} className="flex items-center gap-3 bg-background rounded-lg p-2 border border-border">
+                                    {/* Sıralama butonları */}
+                                    <div className="flex flex-col gap-0.5">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="w-5 h-5 opacity-50 hover:opacity-100"
+                                        onClick={() => moveColorImage(color, imgIndex, 'up')}
+                                        disabled={imgIndex === 0}
+                                      >
+                                        <ArrowUp className="w-3 h-3" />
+                                      </Button>
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="w-5 h-5 opacity-50 hover:opacity-100"
+                                        onClick={() => moveColorImage(color, imgIndex, 'down')}
+                                        disabled={imgIndex === (colorImages[color]?.length || 0) - 1}
+                                      >
+                                        <ArrowDown className="w-3 h-3" />
+                                      </Button>
+                                    </div>
+                                    
+                                    {/* Görsel önizleme */}
+                                    <img
+                                      src={previewUrl}
+                                      alt={`${color} renk görseli ${imgIndex + 1}`}
+                                      className="w-16 h-16 object-contain rounded border border-border bg-background"
+                                    />
+                                    
+                                    {/* Görsel bilgisi */}
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs text-muted-foreground truncate">
+                                        {img.image_url.length > 50 
+                                          ? `${img.image_url.substring(0, 50)}...` 
+                                          : img.image_url}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Sıra: {img.sort_order + 1}
+                                      </p>
+                                    </div>
+                                    
+                                    {/* Sil butonu */}
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="text-xs text-destructive"
+                                      onClick={() => removeColorImage(color, imgIndex)}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          
+                          {/* Yeni görsel ekleme */}
+                          <div className="pt-2 border-t border-border">
+                            <input
+                              type="file"
+                              id={`color-image-${color}-${index}`}
+                              accept="image/*"
+                              multiple={false}
+                              onChange={(e) => handleColorImageSelect(color, e)}
+                              className="hidden"
+                            />
                             <Button
-                              size="icon"
-                              variant="ghost"
-                              className="w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={() => startEditColor(index)}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="text-xs w-full"
+                              disabled={uploadingColorImages[color]}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const fileInput = document.getElementById(`color-image-${color}-${index}`) as HTMLInputElement;
+                                if (fileInput) {
+                                  fileInput.click();
+                                }
+                              }}
                             >
-                              <Pencil className="w-4 h-4" />
+                              {uploadingColorImages[color] ? (
+                                <>
+                                  <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin mr-1" />
+                                  Yükleniyor...
+                                </>
+                              ) : (
+                                <>
+                                  <Upload className="w-3 h-3 mr-1" />
+                                  Dosya Yükle
+                                </>
+                              )}
                             </Button>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="w-8 h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={() => removeColor(index)}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </>
-                        )}
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1128,6 +1881,99 @@ export default function AdminProducts() {
               </div>
             )}
 
+            {/* Discount Tab */}
+            {activeTab === "discount" && (
+              <div className="space-y-6">
+                <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800 rounded-xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-green-800 dark:text-green-300">Ürün İndirimi</h3>
+                      <p className="text-sm text-green-600 dark:text-green-400">Bu ürün için özel indirim ayarlayın</p>
+                    </div>
+                    <Switch
+                      checked={editingProduct?.is_discounted ?? false}
+                      onCheckedChange={(checked) => setEditingProduct({ ...editingProduct, is_discounted: checked })}
+                    />
+                  </div>
+
+                  {editingProduct?.is_discounted && (
+                    <div className="space-y-4 pt-4 border-t border-green-200 dark:border-green-800">
+                      <div>
+                        <Label htmlFor="discount_percentage">İndirim Yüzdesi (%)</Label>
+                        <div className="flex items-center gap-3 mt-1">
+                          <Input
+                            id="discount_percentage"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={editingProduct?.discount_percentage ?? 0}
+                            onChange={(e) => setEditingProduct({ ...editingProduct, discount_percentage: parseFloat(e.target.value) || 0 })}
+                            placeholder="10"
+                            className="max-w-[120px]"
+                          />
+                          <span className="text-2xl font-bold text-green-600">%{editingProduct?.discount_percentage || 0}</span>
+                        </div>
+                      </div>
+
+                      {/* Fiyat Önizlemesi */}
+                      {editingProduct?.price > 0 && editingProduct?.discount_percentage > 0 && (
+                        <div className="bg-white dark:bg-background rounded-lg p-4 border border-green-200 dark:border-green-800">
+                          <p className="text-sm text-muted-foreground mb-2">Fiyat Önizlemesi</p>
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg text-muted-foreground line-through">₺{editingProduct.price}</span>
+                            <span className="text-2xl font-bold text-green-600">
+                              ₺{(editingProduct.price * (1 - (editingProduct.discount_percentage || 0) / 100)).toFixed(0)}
+                            </span>
+                            <Badge className="bg-red-500 text-white">
+                              %{editingProduct.discount_percentage} İNDİRİM
+                            </Badge>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="discount_start_date">Başlangıç Tarihi (Opsiyonel)</Label>
+                          <Input
+                            id="discount_start_date"
+                            type="datetime-local"
+                            value={editingProduct?.discount_start_date ? new Date(editingProduct.discount_start_date).toISOString().slice(0, 16) : ""}
+                            onChange={(e) => setEditingProduct({ 
+                              ...editingProduct, 
+                              discount_start_date: e.target.value ? new Date(e.target.value).toISOString() : null 
+                            })}
+                            className="mt-1"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">Boş bırakılırsa hemen başlar</p>
+                        </div>
+                        <div>
+                          <Label htmlFor="discount_end_date">Bitiş Tarihi (Opsiyonel)</Label>
+                          <Input
+                            id="discount_end_date"
+                            type="datetime-local"
+                            value={editingProduct?.discount_end_date ? new Date(editingProduct.discount_end_date).toISOString().slice(0, 16) : ""}
+                            onChange={(e) => setEditingProduct({ 
+                              ...editingProduct, 
+                              discount_end_date: e.target.value ? new Date(e.target.value).toISOString() : null 
+                            })}
+                            className="mt-1"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">Boş bırakılırsa süresiz devam eder</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {!editingProduct?.is_discounted && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>İndirim aktif değil. Yukarıdaki düğmeyi açarak indirim ayarlayabilirsiniz.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-3 pt-4 border-t border-border">
               <Button
@@ -1136,6 +1982,8 @@ export default function AdminProducts() {
                 onClick={() => {
                   setShowModal(false);
                   setEditingProduct(null);
+                  setSelectedFile(null);
+                  setImagePreview(null);
                   setActiveTab("basic");
                 }}
               >
@@ -1144,9 +1992,9 @@ export default function AdminProducts() {
               <Button
                 className="flex-1"
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || uploadingImage}
               >
-                {saving ? (
+                {saving || uploadingImage ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <>

@@ -16,7 +16,8 @@ import {
   CheckCircle2,
   AlertCircle,
   ArrowLeft,
-  User
+  User,
+  XCircle
 } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { Link } from "react-router-dom";
+import { sendNewTicketNotificationToAdmins } from "@/lib/email";
 
 interface SupportTicket {
   id: string;
@@ -58,12 +60,26 @@ const categories = [
   { value: "other", label: "Diğer" },
 ];
 
+// Client tarafında durum mapping - sadece 3 durum gösterilir
+const getClientStatus = (status: string): string => {
+  switch (status) {
+    case "open":
+      return "open";
+    case "in_progress":
+    case "waiting_customer":
+      return "in_progress"; // Her ikisi de client tarafında "işlemde" olarak gösterilir
+    case "resolved":
+    case "closed":
+      return "resolved"; // Her ikisi de client tarafında "çözüldü" olarak gösterilir
+    default:
+      return status;
+  }
+};
+
 const statusConfig: Record<string, { label: string; color: string }> = {
   open: { label: "Açık", color: "bg-blue-500/10 text-blue-500 border-blue-500/30" },
   in_progress: { label: "İşlemde", color: "bg-amber-500/10 text-amber-500 border-amber-500/30" },
-  waiting_customer: { label: "Yanıt Bekleniyor", color: "bg-purple-500/10 text-purple-500 border-purple-500/30" },
   resolved: { label: "Çözüldü", color: "bg-green-500/10 text-green-500 border-green-500/30" },
-  closed: { label: "Kapatıldı", color: "bg-gray-500/10 text-gray-500 border-gray-500/30" },
 };
 
 type View = "list" | "new" | "chat";
@@ -152,9 +168,25 @@ export default function Contact() {
     }
   };
 
-  const openTicket = (ticket: SupportTicket) => {
+  const openTicket = async (ticket: SupportTicket) => {
     setSelectedTicket(ticket);
     setView("chat");
+    
+    // Ticket'ın güncel durumunu al (admin tarafından kapatılmış olabilir)
+    try {
+      const { data: currentTicket, error } = await supabase
+        .from("support_tickets")
+        .select("*")
+        .eq("id", ticket.id)
+        .single();
+      
+      if (!error && currentTicket) {
+        setSelectedTicket(currentTicket);
+      }
+    } catch (err) {
+      console.error("Ticket durumu güncellenemedi:", err);
+    }
+    
     fetchMessages(ticket.id);
   };
 
@@ -184,7 +216,19 @@ export default function Contact() {
         .select()
         .single();
 
-      if (ticketError) throw ticketError;
+      if (ticketError) {
+        console.error("Ticket oluşturma hatası:", ticketError);
+        // Daha detaylı hata mesajı göster
+        const errorMessage = ticketError.message || "Destek talebi oluşturulamadı";
+        if (ticketError.code === "23505") {
+          toast.error("Bu talep zaten mevcut. Lütfen tekrar deneyin.");
+        } else if (ticketError.code === "42501") {
+          toast.error("Yetki hatası: Destek talebi oluşturma yetkiniz yok.");
+        } else {
+          toast.error(`Destek talebi oluşturulamadı: ${errorMessage}`);
+        }
+        throw ticketError;
+      }
 
       // İlk mesajı ekle
       const { error: messageError } = await supabase
@@ -196,7 +240,45 @@ export default function Contact() {
           message: newMessage.trim(),
         });
 
-      if (messageError) throw messageError;
+      if (messageError) {
+        console.error("Mesaj ekleme hatası:", messageError);
+        // Ticket oluştu ama mesaj eklenemedi - ticket'ı sil
+        await supabase.from("support_tickets").delete().eq("id", ticketData.id);
+        toast.error("Mesaj eklenemedi. Lütfen tekrar deneyin.");
+        throw messageError;
+      }
+
+      // Admin'lere email bildirimi gönder
+      try {
+        const customerName = profile?.full_name || `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim() || "Müşteri";
+        const customerEmail = profile?.email || user?.email || "";
+        
+        console.log("🔔 Admin bildirimi gönderiliyor...", {
+          ticketNumber: ticketData.ticket_number,
+          customerName,
+          customerEmail,
+        });
+        
+        const emailResult = await sendNewTicketNotificationToAdmins(
+          ticketData.ticket_number,
+          newSubject.trim(),
+          newCategory,
+          customerName,
+          customerEmail,
+          newMessage.trim()
+        );
+        
+        if (emailResult.success) {
+          console.log("✅ Admin bildirimi başarılı:", emailResult);
+        } else {
+          console.error("❌ Admin bildirimi başarısız:", emailResult);
+          // Kullanıcıya hata gösterme, sadece logla
+        }
+      } catch (emailError: any) {
+        console.error("❌ Admin bildirimi exception:", emailError);
+        console.error("Error details:", emailError?.message, emailError?.stack);
+        // Email hatası olsa bile ticket oluşturuldu, kullanıcıya hata gösterme
+      }
 
       toast.success("Destek talebiniz oluşturuldu!");
       setNewSubject("");
@@ -205,9 +287,9 @@ export default function Contact() {
       setFormErrors({});
       fetchTickets();
       openTicket(ticketData);
-    } catch (err) {
+    } catch (err: any) {
+      // Hata zaten yukarıda yakalandı ve gösterildi
       console.error("Ticket oluşturulamadı:", err);
-      toast.error("Destek talebi oluşturulamadı");
     } finally {
       setLoading(false);
     }
@@ -216,8 +298,30 @@ export default function Contact() {
   const handleSendReply = async () => {
     if (!replyMessage.trim() || !selectedTicket || !user) return;
 
+    // Kapalı ticket kontrolü
+    if (selectedTicket.status === "closed" || selectedTicket.status === "resolved") {
+      toast.error("Bu talep kapatıldı. Yeni mesaj gönderilemez.");
+      return;
+    }
+
     setSending(true);
     try {
+      // Ticket'ın güncel durumunu kontrol et
+      const { data: currentTicket, error: ticketError } = await supabase
+        .from("support_tickets")
+        .select("status")
+        .eq("id", selectedTicket.id)
+        .single();
+
+      if (ticketError) throw ticketError;
+
+      // Eğer ticket kapatıldıysa mesaj gönderme
+      if (currentTicket?.status === "closed" || currentTicket?.status === "resolved") {
+        setSelectedTicket({ ...selectedTicket, status: currentTicket.status });
+        toast.error("Bu talep kapatıldı. Yeni mesaj gönderilemez.");
+        return;
+      }
+
       const { error } = await supabase
         .from("support_messages")
         .insert({
@@ -228,6 +332,21 @@ export default function Contact() {
         });
 
       if (error) throw error;
+
+      // Eğer ticket durumu "in_progress" ise -> "waiting_customer" yap
+      if (currentTicket?.status === "in_progress") {
+        const { error: updateError } = await supabase
+          .from("support_tickets")
+          .update({ status: "waiting_customer" })
+          .eq("id", selectedTicket.id);
+        
+        if (updateError) {
+          console.error("Durum güncellenemedi:", updateError);
+        } else {
+          // Local state'i güncelle
+          setSelectedTicket({ ...selectedTicket, status: "waiting_customer" });
+        }
+      }
 
       setReplyMessage("");
       fetchMessages(selectedTicket.id);
@@ -441,7 +560,7 @@ export default function Contact() {
                   </div>
                   <div className="text-center p-3 bg-muted/30 rounded-xl">
                     <p className="text-2xl font-bold text-amber-500">
-                      {tickets.filter(t => t.status === "open" || t.status === "in_progress").length}
+                      {tickets.filter(t => t.status === "open").length}
                     </p>
                     <p className="text-xs text-muted-foreground">Açık</p>
                   </div>
@@ -484,32 +603,46 @@ export default function Contact() {
                       </div>
                     ) : (
                       <div className="divide-y divide-border">
-                        {tickets.map((ticket) => (
-                          <div
-                            key={ticket.id}
-                            onClick={() => openTicket(ticket)}
-                            className="p-4 hover:bg-muted/30 cursor-pointer transition-colors"
-                          >
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-xs text-muted-foreground font-mono">
-                                    {ticket.ticket_number}
-                                  </span>
-                                  <Badge variant="outline" className={statusConfig[ticket.status]?.color}>
-                                    {statusConfig[ticket.status]?.label}
-                                  </Badge>
+                        {tickets.map((ticket) => {
+                          const isClosed = ticket.status === "closed" || ticket.status === "resolved";
+                          return (
+                            <div
+                              key={ticket.id}
+                              onClick={() => openTicket(ticket)}
+                              className={cn(
+                                "p-4 cursor-pointer transition-colors",
+                                isClosed 
+                                  ? "bg-muted/20 hover:bg-muted/30 opacity-75" 
+                                  : "hover:bg-muted/30"
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-xs text-muted-foreground font-mono">
+                                      {ticket.ticket_number}
+                                    </span>
+                                    <Badge variant="outline" className={statusConfig[getClientStatus(ticket.status)]?.color}>
+                                      {statusConfig[getClientStatus(ticket.status)]?.label}
+                                    </Badge>
+                                    {isClosed && (
+                                      <XCircle className="w-4 h-4 text-muted-foreground" />
+                                    )}
+                                  </div>
+                                  <h3 className={cn(
+                                    "font-medium truncate",
+                                    isClosed && "text-muted-foreground"
+                                  )}>{ticket.subject}</h3>
+                                  <p className="text-sm text-muted-foreground">
+                                    {categories.find(c => c.value === ticket.category)?.label} • {" "}
+                                    {new Date(ticket.updated_at).toLocaleDateString("tr-TR")}
+                                  </p>
                                 </div>
-                                <h3 className="font-medium truncate">{ticket.subject}</h3>
-                                <p className="text-sm text-muted-foreground">
-                                  {categories.find(c => c.value === ticket.category)?.label} • {" "}
-                                  {new Date(ticket.updated_at).toLocaleDateString("tr-TR")}
-                                </p>
+                                <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
                               </div>
-                              <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </motion.div>
@@ -625,16 +758,27 @@ export default function Contact() {
                     style={{ height: "600px" }}
                   >
                     {/* Chat Header */}
-                    <div className="p-4 border-b border-border flex items-center gap-4">
+                    <div className={cn(
+                      "p-4 border-b border-border flex items-center gap-4",
+                      (selectedTicket.status === "closed" || selectedTicket.status === "resolved") && "bg-muted/30"
+                    )}>
                       <Button variant="ghost" size="icon" onClick={goBack}>
                         <ArrowLeft className="w-5 h-5" />
                       </Button>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <h3 className="font-semibold truncate">{selectedTicket.subject}</h3>
-                          <Badge variant="outline" className={statusConfig[selectedTicket.status]?.color}>
-                            {statusConfig[selectedTicket.status]?.label}
+                          <h3 className={cn(
+                            "font-semibold truncate",
+                            (selectedTicket.status === "closed" || selectedTicket.status === "resolved") && "text-muted-foreground"
+                          )}>
+                            {selectedTicket.subject}
+                          </h3>
+                          <Badge variant="outline" className={statusConfig[getClientStatus(selectedTicket.status)]?.color}>
+                            {statusConfig[getClientStatus(selectedTicket.status)]?.label}
                           </Badge>
+                          {(selectedTicket.status === "closed" || selectedTicket.status === "resolved") && (
+                            <XCircle className="w-4 h-4 text-muted-foreground" />
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {selectedTicket.ticket_number} • {categories.find(c => c.value === selectedTicket.category)?.label}
@@ -714,11 +858,34 @@ export default function Contact() {
 
                     {/* Closed ticket notice */}
                     {(selectedTicket.status === "closed" || selectedTicket.status === "resolved") && (
-                      <div className="p-4 border-t border-border bg-muted/30 text-center">
-                        <p className="text-sm text-muted-foreground">
-                          Bu talep {selectedTicket.status === "resolved" ? "çözüldü" : "kapatıldı"}. 
-                          Yeni bir sorun için <button onClick={() => setView("new")} className="text-primary hover:underline">yeni talep oluşturun</button>.
-                        </p>
+                      <div className="p-4 border-t border-border bg-muted/50">
+                        <div className="flex items-center gap-3 p-3 bg-card rounded-lg border border-border/50">
+                          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
+                            {selectedTicket.status === "resolved" ? (
+                              <CheckCircle2 className="w-5 h-5 text-green-500" />
+                            ) : (
+                              <XCircle className="w-5 h-5 text-gray-500" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium mb-1">
+                              Bu talep çözüldü
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Bu talebe artık yeni mesaj gönderilemez. Yeni bir sorun için{" "}
+                              <button 
+                                onClick={() => {
+                                  setView("new");
+                                  setSelectedTicket(null);
+                                }} 
+                                className="text-primary hover:underline font-medium"
+                              >
+                                yeni talep oluşturun
+                              </button>
+                              .
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </motion.div>

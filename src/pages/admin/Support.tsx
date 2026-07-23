@@ -13,13 +13,25 @@ import {
   Filter,
   XCircle,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { supabase } from "@/lib/supabase";
+import { sendSupportSms } from "@/lib/sms";
+import { sendSupportEmail } from "@/lib/email";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -75,11 +87,14 @@ export default function AdminSupport() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
+  const [showCompleted, setShowCompleted] = useState(true);
   const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [replyMessage, setReplyMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [showCloseDialog, setShowCloseDialog] = useState(false);
+  const [closingTicket, setClosingTicket] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Stats
@@ -87,7 +102,9 @@ export default function AdminSupport() {
     total: 0,
     open: 0,
     inProgress: 0,
+    waitingCustomer: 0,
     resolved: 0,
+    closed: 0,
   });
 
   useEffect(() => {
@@ -157,7 +174,7 @@ export default function AdminSupport() {
       console.error("Ticketlar yüklenemedi:", err);
       if (err?.code === "42P01" || err?.message?.includes("does not exist")) {
         setTickets([]);
-        setStats({ total: 0, open: 0, inProgress: 0, resolved: 0 });
+        setStats({ total: 0, open: 0, inProgress: 0, waitingCustomer: 0, resolved: 0, closed: 0 });
         return;
       }
       toast.error("Destek talepleri yüklenemedi");
@@ -170,8 +187,10 @@ export default function AdminSupport() {
     setStats({
       total: allTickets.length,
       open: allTickets.filter((t) => t.status === "open").length,
-      inProgress: allTickets.filter((t) => t.status === "in_progress" || t.status === "waiting_customer").length,
-      resolved: allTickets.filter((t) => t.status === "resolved" || t.status === "closed").length,
+      inProgress: allTickets.filter((t) => t.status === "in_progress").length,
+      waitingCustomer: allTickets.filter((t) => t.status === "waiting_customer").length,
+      resolved: allTickets.filter((t) => t.status === "resolved").length,
+      closed: allTickets.filter((t) => t.status === "closed").length,
     });
   };
 
@@ -220,6 +239,50 @@ export default function AdminSupport() {
 
       if (error) throw error;
 
+      // Eğer ticket durumu "open" ise -> "in_progress" yap
+      // Eğer ticket durumu "waiting_customer" ise -> "in_progress" yap
+      let newStatus = selectedTicket.status;
+      if (selectedTicket.status === "open" || selectedTicket.status === "waiting_customer") {
+        newStatus = "in_progress";
+        const { error: updateError } = await supabase
+          .from("support_tickets")
+          .update({ status: "in_progress" })
+          .eq("id", selectedTicket.id);
+        
+        if (updateError) {
+          console.error("Durum güncellenemedi:", updateError);
+        } else {
+          // Local state'i güncelle
+          setSelectedTicket({ ...selectedTicket, status: "in_progress" });
+        }
+      }
+
+      // Müşteriye SMS gönder
+      if (selectedTicket.user_id) {
+        const { data: profile } = await supabase
+          .from("user_profiles")
+          .select("phone")
+          .eq("id", selectedTicket.user_id)
+          .single();
+        
+        if (profile?.phone) {
+          sendSupportSms(profile.phone, selectedTicket.ticket_number, "reply")
+            .catch(console.error);
+        }
+
+        // Email bildirimi gönder
+        const { data: userProfile } = await supabase
+          .from("user_profiles")
+          .select("email")
+          .eq("id", selectedTicket.user_id)
+          .single();
+        
+        if (userProfile?.email) {
+          sendSupportEmail(userProfile.email, selectedTicket.ticket_number, "reply", replyMessage.trim())
+            .catch(console.error);
+        }
+      }
+
       setReplyMessage("");
       fetchMessages(selectedTicket.id);
       fetchTickets();
@@ -235,6 +298,18 @@ export default function AdminSupport() {
   const handleUpdateStatus = async (status: string) => {
     if (!selectedTicket) return;
 
+    // Eğer kapatma isteniyorsa, onay dialogu göster
+    if (status === "closed" && selectedTicket.status !== "closed") {
+      setShowCloseDialog(true);
+      return;
+    }
+
+    await updateTicketStatus(status);
+  };
+
+  const updateTicketStatus = async (status: string) => {
+    if (!selectedTicket) return;
+
     try {
       const updateData: any = { status };
       if (status === "closed" || status === "resolved") {
@@ -248,16 +323,61 @@ export default function AdminSupport() {
 
       if (error) throw error;
 
+      // Çözüldü durumunda SMS gönder
+      if (status === "resolved" || status === "closed") {
+        if (selectedTicket.user_id) {
+          const { data: profile } = await supabase
+            .from("user_profiles")
+            .select("phone")
+            .eq("id", selectedTicket.user_id)
+            .single();
+          
+          if (profile?.phone) {
+            sendSupportSms(profile.phone, selectedTicket.ticket_number, "resolved")
+              .catch(console.error);
+          }
+
+          // Email bildirimi gönder
+          const { data: userProfile } = await supabase
+            .from("user_profiles")
+            .select("email")
+            .eq("id", selectedTicket.user_id)
+            .single();
+          
+          if (userProfile?.email) {
+            sendSupportEmail(userProfile.email, selectedTicket.ticket_number, "resolved")
+              .catch(console.error);
+          }
+        }
+      }
+
       setSelectedTicket({ ...selectedTicket, status });
       fetchTickets();
-      toast.success("Durum güncellendi");
+      setShowCloseDialog(false);
+      toast.success(status === "closed" ? "Talep kapatıldı" : "Durum güncellendi");
     } catch (err) {
       console.error("Durum güncellenemedi:", err);
       toast.error("Durum güncellenemedi");
     }
   };
 
+  const handleCloseTicket = async () => {
+    if (!selectedTicket) return;
+    setClosingTicket(true);
+    try {
+      await updateTicketStatus("closed");
+    } finally {
+      setClosingTicket(false);
+    }
+  };
+
   const filteredTickets = tickets.filter((ticket) => {
+    // Çözüldü ve kapatıldı talepleri gizleme kontrolü
+    if (!showCompleted && (ticket.status === "resolved" || ticket.status === "closed")) {
+      return false;
+    }
+
+    // Arama filtresi
     if (!searchTerm) return true;
     const search = searchTerm.toLowerCase();
     return (
@@ -279,27 +399,10 @@ export default function AdminSupport() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-card rounded-xl p-4 border border-border/50"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <MessageSquare className="w-5 h-5 text-blue-500" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.total}</p>
-                <p className="text-sm text-muted-foreground">Toplam</p>
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
             className="bg-card rounded-xl p-4 border border-border/50"
           >
             <div className="flex items-center gap-3">
@@ -316,16 +419,33 @@ export default function AdminSupport() {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
+            transition={{ delay: 0.1 }}
             className="bg-card rounded-xl p-4 border border-border/50"
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                <Clock className="w-5 h-5 text-amber-500" />
+                <RefreshCw className="w-5 h-5 text-amber-500" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{stats.inProgress}</p>
                 <p className="text-sm text-muted-foreground">İşlemde</p>
+              </div>
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-card rounded-xl p-4 border border-border/50"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                <Clock className="w-5 h-5 text-purple-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats.waitingCustomer}</p>
+                <p className="text-sm text-muted-foreground">Yanıt Bekleniyor</p>
               </div>
             </div>
           </motion.div>
@@ -343,6 +463,23 @@ export default function AdminSupport() {
               <div>
                 <p className="text-2xl font-bold">{stats.resolved}</p>
                 <p className="text-sm text-muted-foreground">Çözüldü</p>
+              </div>
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="bg-card rounded-xl p-4 border border-border/50"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gray-500/10 flex items-center justify-center">
+                <XCircle className="w-5 h-5 text-gray-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats.closed}</p>
+                <p className="text-sm text-muted-foreground">Kapatıldı</p>
               </div>
             </div>
           </motion.div>
@@ -364,7 +501,7 @@ export default function AdminSupport() {
                 />
               </div>
               <div className="flex flex-wrap gap-2">
-                {(["all", "open", "in_progress", "waiting_customer"] as FilterStatus[]).map((status) => (
+                {(["all", "open", "in_progress", "waiting_customer", "resolved", "closed"] as FilterStatus[]).map((status) => (
                   <Button
                     key={status}
                     variant={statusFilter === status ? "default" : "outline"}
@@ -375,9 +512,21 @@ export default function AdminSupport() {
                     {status === "all" && "Tümü"}
                     {status === "open" && "Açık"}
                     {status === "in_progress" && "İşlemde"}
-                    {status === "waiting_customer" && "Bekleyen"}
+                    {status === "waiting_customer" && "Yanıt Bekleniyor"}
+                    {status === "resolved" && "Çözüldü"}
+                    {status === "closed" && "Kapatıldı"}
                   </Button>
                 ))}
+              </div>
+              <div className="flex items-center gap-2 pt-2 border-t border-border">
+                <Switch
+                  id="show-completed"
+                  checked={showCompleted}
+                  onCheckedChange={setShowCompleted}
+                />
+                <Label htmlFor="show-completed" className="text-sm cursor-pointer">
+                  Çözüldü ve Kapatıldı Talepleri Göster
+                </Label>
               </div>
             </div>
 
@@ -463,6 +612,12 @@ export default function AdminSupport() {
                     <div>
                       <div className="flex items-center gap-2 mb-1">
                         <h3 className="font-semibold">{selectedTicket.subject}</h3>
+                        <Badge
+                          variant="outline"
+                          className={cn("text-xs", statusConfig[selectedTicket.status]?.color)}
+                        >
+                          {statusConfig[selectedTicket.status]?.label}
+                        </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">
                         {selectedTicket.ticket_number} •{" "}
@@ -475,6 +630,7 @@ export default function AdminSupport() {
                         value={selectedTicket.status}
                         onChange={(e) => handleUpdateStatus(e.target.value)}
                         className="h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        disabled={selectedTicket.status === "closed"}
                       >
                         <option value="open">Açık</option>
                         <option value="in_progress">İşlemde</option>
@@ -482,6 +638,17 @@ export default function AdminSupport() {
                         <option value="resolved">Çözüldü</option>
                         <option value="closed">Kapatıldı</option>
                       </select>
+                      {selectedTicket.status !== "closed" && (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => setShowCloseDialog(true)}
+                          className="gap-2"
+                        >
+                          <X className="w-4 h-4" />
+                          Kapat
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -542,29 +709,41 @@ export default function AdminSupport() {
                   )}
                 </div>
 
-                {/* Reply Input */}
-                <div className="p-4 border-t border-border">
-                  <div className="flex gap-3">
-                    <Input
-                      value={replyMessage}
-                      onChange={(e) => setReplyMessage(e.target.value)}
-                      placeholder="Yanıtınızı yazın..."
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSendReply();
-                        }
-                      }}
-                    />
-                    <Button onClick={handleSendReply} disabled={sending || !replyMessage.trim()}>
-                      {sending ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Send className="w-4 h-4" />
-                      )}
-                    </Button>
+                {/* Reply Input - Sadece kapalı olmayan ticket'larda göster */}
+                {selectedTicket.status !== "closed" && (
+                  <div className="p-4 border-t border-border">
+                    <div className="flex gap-3">
+                      <Input
+                        value={replyMessage}
+                        onChange={(e) => setReplyMessage(e.target.value)}
+                        placeholder="Yanıtınızı yazın..."
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendReply();
+                          }
+                        }}
+                      />
+                      <Button onClick={handleSendReply} disabled={sending || !replyMessage.trim()}>
+                        {sending ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* Kapalı ticket uyarısı */}
+                {selectedTicket.status === "closed" && (
+                  <div className="p-4 border-t border-border bg-muted/30">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <XCircle className="w-4 h-4" />
+                      <span>Bu talep kapatılmış. Yeni mesaj gönderilemez.</span>
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <div className="flex items-center justify-center h-full text-center p-8">
@@ -580,6 +759,50 @@ export default function AdminSupport() {
           </div>
         </div>
       </div>
+
+      {/* Kapatma Onay Dialogu */}
+      <Dialog open={showCloseDialog} onOpenChange={setShowCloseDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Talep Kapatma Onayı</DialogTitle>
+            <DialogDescription>
+              Bu talebi kapatmak istediğinize emin misiniz? Kapatıldıktan sonra bu talebe yeni mesaj eklenemeyecek.
+              {selectedTicket && (
+                <div className="mt-2 p-3 bg-muted rounded-md">
+                  <p className="text-sm font-medium">{selectedTicket.ticket_number}</p>
+                  <p className="text-xs text-muted-foreground">{selectedTicket.subject}</p>
+                </div>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowCloseDialog(false)}
+              disabled={closingTicket}
+            >
+              İptal
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleCloseTicket}
+              disabled={closingTicket}
+            >
+              {closingTicket ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Kapatılıyor...
+                </>
+              ) : (
+                <>
+                  <X className="w-4 h-4 mr-2" />
+                  Evet, Kapat
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AdminLayout>
   );
 }

@@ -4,7 +4,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { 
   Wifi, QrCode, Edit, RefreshCw, ExternalLink, 
   Copy, Check, CreditCard, PawPrint, Link2, Download, Loader2,
-  Eye, Save, X, Calendar, AlertTriangle
+  Eye, Save, X, Calendar, AlertTriangle, ShoppingCart
 } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { useAuth } from "@/contexts/AuthContext";
@@ -106,6 +106,11 @@ export default function MyNFC() {
 
       if (error) throw error;
       setNfcs(data || []);
+      
+      // NFC'ler yüklendikten sonra süresi dolmuş olanları kontrol et
+      if (data && data.length > 0) {
+        await deactivateExpiredNfcs(data);
+      }
     } catch (error) {
       console.error("NFC'ler yüklenemedi:", error);
       toast.error("NFC'ler yüklenemedi");
@@ -226,6 +231,102 @@ export default function MyNFC() {
     return Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
   };
 
+  const getTimeRemaining = (endDate: string | null): string => {
+    if (!endDate) return "Süre bilgisi yok";
+    
+    const end = new Date(endDate);
+    const now = new Date();
+    const diff = end.getTime() - now.getTime();
+    
+    if (diff <= 0) return "0 dakika kaldı";
+    
+    const totalSeconds = Math.max(0, Math.floor(diff / 1000));
+    const days = Math.floor(totalSeconds / (60 * 60 * 24));
+    const hours = Math.floor((totalSeconds % (60 * 60 * 24)) / (60 * 60));
+    const minutes = Math.floor((totalSeconds % (60 * 60)) / 60);
+    
+    const parts: string[] = [];
+    if (days > 0) parts.push(`${days} gün`);
+    if (hours > 0) parts.push(`${hours} saat`);
+    if (minutes > 0 || parts.length === 0) parts.push(`${minutes} dakika`);
+    
+    return parts.join(", ") + " kaldı";
+  };
+
+  // Süresi dolmuş NFC'leri otomatik pasife al
+  const deactivateExpiredNfcs = async (currentNfcs?: NFCRecord[]) => {
+    if (!user) return;
+
+    try {
+      const now = new Date().toISOString();
+      const nfcsToCheck = currentNfcs || nfcs;
+      
+      // Süresi dolmuş ve hala aktif olan NFC'leri bul
+      const expiredNfcs = nfcsToCheck.filter((nfc) => {
+        if (!nfc.is_active) return false;
+        if (!nfc.subscription_end_date) return false;
+        return new Date(nfc.subscription_end_date) < new Date();
+      });
+
+      if (expiredNfcs.length > 0) {
+        // Pasife al
+        const { error: updateError } = await supabase
+          .from("nfcs")
+          .update({
+            is_active: false,
+            subscription_status: "expired",
+            updated_at: now,
+          })
+          .in(
+            "id",
+            expiredNfcs.map((nfc) => nfc.id)
+          );
+
+        if (updateError) throw updateError;
+
+        // Local state'i güncelle (eğer currentNfcs verilmediyse)
+        if (!currentNfcs) {
+          setNfcs((prev) =>
+            prev.map((nfc) => {
+              const isExpired = expiredNfcs.some((expired) => expired.id === nfc.id);
+              if (isExpired) {
+                return {
+                  ...nfc,
+                  is_active: false,
+                  subscription_status: "expired",
+                };
+              }
+              return nfc;
+            })
+          );
+        } else {
+          // currentNfcs verildiyse, direkt state'i güncelle
+          const updatedNfcs = currentNfcs.map((nfc) => {
+            const isExpired = expiredNfcs.some((expired) => expired.id === nfc.id);
+            if (isExpired) {
+              return {
+                ...nfc,
+                is_active: false,
+                subscription_status: "expired",
+              };
+            }
+            return nfc;
+          });
+          setNfcs(updatedNfcs);
+        }
+
+        // Kullanıcıya bilgi ver
+        if (expiredNfcs.length === 1) {
+          toast.error(`${expiredNfcs[0].name} NFC'sinin abonelik süresi doldu ve pasife alındı.`);
+        } else {
+          toast.error(`${expiredNfcs.length} NFC'nin abonelik süresi doldu ve pasife alındı.`);
+        }
+      }
+    } catch (error) {
+      console.error("Süresi dolmuş NFC'ler pasife alınamadı:", error);
+    }
+  };
+
   const getQrCodeUrl = (nfc: NFCRecord) => {
     const url = encodeURIComponent(getFullUrl(nfc));
     return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${url}`;
@@ -250,9 +351,19 @@ export default function MyNFC() {
   };
 
   const isSubscriptionActive = (nfc: NFCRecord) => {
-    if (nfc.subscription_status === "active") return true;
+    // Eğer pasif ise direkt false dön
+    if (!nfc.is_active) return false;
+    
+    // Eğer expired status ise false dön
+    if (nfc.subscription_status === "expired") return false;
+    
+    // Eğer subscription_end_date yoksa false dön
     if (!nfc.subscription_end_date) return false;
-    return new Date(nfc.subscription_end_date) > new Date();
+    
+    // Süre kontrolü - eğer süre dolmuşsa false dön
+    const endDate = new Date(nfc.subscription_end_date);
+    const now = new Date();
+    return endDate > now;
   };
 
   if (authLoading || loading) {
@@ -408,38 +519,63 @@ export default function MyNFC() {
                               </p>
                               {nfc.subscription_end_date && (
                                 <p className="text-xs text-muted-foreground">
-                                  Bitiş: {new Date(nfc.subscription_end_date).toLocaleDateString('tr-TR')} 
-                                  ({getDaysRemaining(nfc.subscription_end_date)} gün kaldı)
+                                  Bitiş: {new Date(nfc.subscription_end_date).toLocaleString('tr-TR', {
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    year: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })} 
+                                  <span className="ml-1">({getTimeRemaining(nfc.subscription_end_date)})</span>
                                 </p>
                               )}
                             </div>
                           ) : (
-                            <div className="space-y-1">
-                              <p className="text-sm text-destructive font-medium flex items-center gap-2">
-                                <AlertTriangle className="w-4 h-4" />
-                                Süresi Dolmuş
-                              </p>
-                              {nfc.subscription_end_date && (
-                                <p className="text-xs text-muted-foreground">
-                                  Sona erme: {new Date(nfc.subscription_end_date).toLocaleDateString('tr-TR')}
+                            <div className="space-y-2">
+                              <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+                                <p className="text-sm text-destructive font-medium flex items-center gap-2 mb-2">
+                                  <AlertTriangle className="w-4 h-4" />
+                                  Abonelik Süresi Doldu
                                 </p>
-                              )}
-                              <p className="text-xs text-destructive">
-                                NFC sayfanız görüntülenemiyor. Aboneliğinizi yenileyin.
-                              </p>
+                                {nfc.subscription_end_date && (
+                                  <p className="text-xs text-muted-foreground mb-2">
+                                    Sona erme: {new Date(nfc.subscription_end_date).toLocaleString('tr-TR', {
+                                      day: '2-digit',
+                                      month: '2-digit',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </p>
+                                )}
+                                <p className="text-xs text-destructive font-medium mb-2">
+                                  NFC sayfanız şu anda görüntülenemiyor. Devam etmek için abonelik satın alın.
+                                </p>
+                                <Button
+                                  variant="hero"
+                                  size="sm"
+                                  className="w-full mt-2"
+                                  onClick={() => handleRenewSubscription(nfc)}
+                                >
+                                  <CreditCard className="w-4 h-4 mr-2" />
+                                  Abonelik Satın Al
+                                </Button>
+                              </div>
                             </div>
                           )}
                         </div>
-                        <div className="flex items-center">
-                          <Button 
-                            variant={subscriptionActive ? "outline" : "hero"} 
-                            size="sm"
-                            onClick={() => handleRenewSubscription(nfc)}
-                          >
-                            <RefreshCw className="w-4 h-4 mr-1" />
-                            {subscriptionActive ? "Süre Uzat" : "Aboneliği Yenile"}
-                          </Button>
-                        </div>
+                        {subscriptionActive && (
+                          <div className="flex items-center">
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => handleRenewSubscription(nfc)}
+                            >
+                              <RefreshCw className="w-4 h-4 mr-1" />
+                              Süre Uzat
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </div>
 

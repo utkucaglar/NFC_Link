@@ -44,6 +44,7 @@ export interface ShippingAddress {
   postal_code: string;
   country: string;
   is_default: boolean;
+  is_active: boolean;
   notes: string | null;
   created_at: string;
   updated_at: string;

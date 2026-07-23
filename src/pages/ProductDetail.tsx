@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2, ChevronRight, X, Star, MessageSquare, User, ThumbsUp, Send } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ShoppingCart, ArrowLeft, Plus, Minus, Check, Truck, Shield, RefreshCw, Loader2, ChevronRight, ChevronLeft, X, Star, MessageSquare, User, ThumbsUp, Send } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,11 +12,14 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { 
   getProductImage, 
+  getProductImageByColor,
+  getProductImagesByColor,
   formatPrice,
   DEFAULT_FEATURES, 
   DEFAULT_SPECS, 
   DEFAULT_COLORS 
 } from "@/lib/helpers";
+import DOMPurify from "dompurify";
 import {
   Dialog,
   DialogContent,
@@ -29,7 +32,7 @@ import { BusinessCardForm, BusinessCardData, defaultBusinessCardData } from "@/c
 import { PetIdForm, PetIdData, defaultPetIdData } from "@/components/forms/PetIdForm";
 import { RedirectForm, RedirectData, defaultRedirectData } from "@/components/forms/RedirectForm";
 
-type NFCType = "business-card" | "pet-id" | "redirect" | null;
+type NFCType = "business-card" | "pet-id" | "redirect" | "nfc-yok" | null;
 
 interface Product {
   id: number;
@@ -44,9 +47,39 @@ interface Product {
   colors: string[] | null;
   specs: Record<string, string> | null;
   monthly_subscription_fee: number;
+  free_subscription_months: number;
+  has_subscription?: boolean;
   is_active: boolean;
   nfc_type: NFCType;
+  // İndirim alanları
+  discount_percentage: number;
+  is_discounted: boolean;
+  discount_start_date: string | null;
+  discount_end_date: string | null;
 }
+
+// İndirim aktif mi kontrol eden yardımcı fonksiyon
+const isDiscountActive = (product: Product): boolean => {
+  if (!product.is_discounted || !product.discount_percentage || product.discount_percentage <= 0) {
+    return false;
+  }
+  const now = new Date();
+  if (product.discount_start_date && new Date(product.discount_start_date) > now) {
+    return false;
+  }
+  if (product.discount_end_date && new Date(product.discount_end_date) < now) {
+    return false;
+  }
+  return true;
+};
+
+// İndirimli fiyatı hesaplayan yardımcı fonksiyon
+const getDiscountedPrice = (product: Product): number => {
+  if (!isDiscountActive(product)) {
+    return product.price;
+  }
+  return Math.round(product.price * (1 - product.discount_percentage / 100));
+};
 
 interface Review {
   id: string;
@@ -86,6 +119,10 @@ export default function ProductDetail() {
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentProductImage, setCurrentProductImage] = useState<string>("");
+  const [productImages, setProductImages] = useState<string[]>([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [imagesByColor, setImagesByColor] = useState<Record<string, string[]>>({});
   
   // Customization form state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -93,6 +130,8 @@ export default function ProductDetail() {
   const [petIdData, setPetIdData] = useState<PetIdData>(defaultPetIdData);
   const [redirectData, setRedirectData] = useState<RedirectData>(defaultRedirectData);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [emailValidated, setEmailValidated] = useState(false);
+  const [emailValidationAttempted, setEmailValidationAttempted] = useState(false);
 
   // Reviews state
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -169,6 +208,149 @@ export default function ProductDetail() {
     }
   }, [product?.id, user]);
 
+  // Ürün yüklendiğinde tüm renklerin görsellerini önceden yükle
+  useEffect(() => {
+    const preloadAllColorImages = async () => {
+      if (!product) return;
+      
+      const colors = product.colors?.length
+        ? product.colors
+        : DEFAULT_COLORS[product.category] || ["Standart"];
+      
+      // Tüm renklerin görsellerini paralel olarak yükle
+      const imagePromises = colors.map(async (color) => {
+        const images = await getProductImagesByColor(
+          product.id,
+          color,
+          product.image_url,
+          product.category
+        );
+        return { color, images };
+      });
+      
+      const results = await Promise.all(imagePromises);
+      const imagesMap: Record<string, string[]> = {};
+      results.forEach(({ color, images }) => {
+        imagesMap[color] = images;
+        // Görselleri önceden yükle (preload)
+        images.forEach((imgUrl) => {
+          const img = new Image();
+          img.src = imgUrl;
+        });
+      });
+      
+      setImagesByColor(imagesMap);
+      
+      // İlk rengin görsellerini ayarla
+      const firstColor = colors[0];
+      if (imagesMap[firstColor] && imagesMap[firstColor].length > 0) {
+        setProductImages(imagesMap[firstColor]);
+        setCurrentImageIndex(0);
+        setCurrentProductImage(imagesMap[firstColor][0]);
+      }
+    };
+
+    preloadAllColorImages();
+  }, [product]);
+
+  // Renk seçildiğinde görselleri güncelle (cache'den)
+  useEffect(() => {
+    if (!product || Object.keys(imagesByColor).length === 0) return;
+    
+    const colors = product.colors?.length
+      ? product.colors
+      : DEFAULT_COLORS[product.category] || ["Standart"];
+    
+    const selectedColorName = colors[selectedColor] || colors[0];
+    
+    // Cache'den görselleri al
+    const images = imagesByColor[selectedColorName] || [];
+    
+    if (images.length > 0) {
+      setProductImages(images);
+      setCurrentImageIndex(0);
+      setCurrentProductImage(images[0]);
+    }
+  }, [product, selectedColor, imagesByColor]);
+
+  // Görsel değiştiğinde currentProductImage'i güncelle
+  useEffect(() => {
+    if (productImages.length > 0 && currentImageIndex < productImages.length) {
+      setCurrentProductImage(productImages[currentImageIndex]);
+    }
+  }, [currentImageIndex, productImages]);
+
+  // Klavye ile gezinme (sol/sağ ok tuşları)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (productImages.length <= 1) return;
+      
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setCurrentImageIndex((prev) => 
+          prev > 0 ? prev - 1 : productImages.length - 1
+        );
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setCurrentImageIndex((prev) => 
+          prev < productImages.length - 1 ? prev + 1 : 0
+        );
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [productImages.length]);
+
+  // Touch/swipe desteği için
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [touchEnd, setTouchEnd] = useState<number | null>(null);
+
+  const minSwipeDistance = 50;
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    setTouchEnd(null);
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+    
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+
+    if (isLeftSwipe && productImages.length > 1) {
+      setCurrentImageIndex((prev) => 
+        prev < productImages.length - 1 ? prev + 1 : 0
+      );
+    }
+    if (isRightSwipe && productImages.length > 1) {
+      setCurrentImageIndex((prev) => 
+        prev > 0 ? prev - 1 : productImages.length - 1
+      );
+    }
+  };
+
+  // Görsel değiştirme fonksiyonları
+  const goToPreviousImage = useCallback(() => {
+    if (productImages.length <= 1) return;
+    setCurrentImageIndex((prev) => 
+      prev > 0 ? prev - 1 : productImages.length - 1
+    );
+  }, [productImages.length]);
+
+  const goToNextImage = useCallback(() => {
+    if (productImages.length <= 1) return;
+    setCurrentImageIndex((prev) => 
+      prev < productImages.length - 1 ? prev + 1 : 0
+    );
+  }, [productImages.length]);
+
   const fetchReviews = async () => {
     if (!product?.id) return;
     
@@ -231,7 +413,8 @@ export default function ProductDetail() {
         `)
         .eq("user_id", user.id)
         .eq("order_items.product_id", product.id)
-        .in("status", ["delivered", "shipped", "confirmed", "pending"]);
+        // Yorum için "ödeme başarısız/pending" siparişleri sayma
+        .in("status", ["delivered", "shipped", "confirmed"]);
 
       console.log("Order check:", { orderData, orderError, productId: product.id, userId: user.id });
 
@@ -370,43 +553,127 @@ export default function ProductDetail() {
     ? product.colors
     : DEFAULT_COLORS[product.category] || ["Standart"];
   
-  const productImage = getProductImage(product.image_url, product.category);
-  const longDescription = product.long_description || product.description || "Profesyonel NFC çözümü ile dijital varlığınızı paylaşın.";
+  // İlk yüklemede görseli ayarla
+  const productImage = currentProductImage || getProductImage(product.image_url, product.category);
+  const rawLongDescription = product.long_description || product.description || "Profesyonel NFC çözümü ile dijital varlığınızı paylaşın.";
+  // Eski düz metin: satır sonlarını <br /> yap; HTML ise olduğu gibi bırak. XSS için sanitize et.
+  const longDescriptionHtml = (() => {
+    const text = String(rawLongDescription || "").trim();
+    const withBreaks = text.includes("<") ? text : text.replace(/\n/g, "<br />");
+    return DOMPurify.sanitize(withBreaks, {
+      ALLOWED_TAGS: ["b", "i", "u", "strong", "em", "p", "br", "ul", "ol", "li"],
+      ALLOWED_ATTR: [],
+    });
+  })();
   
   // NFC tipi belirleme
   const nfcType = product.nfc_type || getNfcTypeFromCategory(product.category);
-  const requiresCustomization = nfcType === "business-card" || nfcType === "pet-id" || nfcType === "redirect";
+  const hasSub = product.has_subscription !== false && nfcType !== "nfc-yok";
+  const requiresCustomization = (nfcType === "business-card" || nfcType === "pet-id" || nfcType === "redirect");
+
+  // Basit telefon numarası validasyonu - parse etmeden sadece rakam sayısını kontrol et
+  const validatePhoneNumber = (phone: string): boolean => {
+    if (!phone || !phone.trim()) {
+      console.log("validatePhoneNumber - phone is empty:", phone);
+      return false;
+    }
+    
+    // Önce tüm boşlukları temizle (input'ta boşluklarla gösteriliyor olabilir)
+    const cleanPhone = phone.replace(/\s/g, "");
+    console.log("validatePhoneNumber - input:", phone, "cleaned:", cleanPhone);
+    
+    // Bilinen country code'ları kontrol et (uzun olanlardan başla, yoksa +1 gibi kısa olanlar yanlış eşleşir)
+    // Örnek: +358 ile başlıyorsa +3 ile eşleşmemeli
+    const countryCodes = [
+      "+358", "+971", "+966", // 3 haneli (önce kontrol et)
+      "+90", "+44", "+49", "+33", "+39", "+34", "+31", "+32", "+41", "+43", "+46", "+47", "+45", "+86", "+81", "+82", "+91", "+20", "+27", "+61", "+64", "+55", "+52", "+54", // 2 haneli
+      "+1", "+7" // 1 haneli (en son kontrol et)
+    ];
+    
+    // Country code'u bul (uzun olanlardan başla)
+    let countryCode = "";
+    for (const code of countryCodes) {
+      if (cleanPhone.startsWith(code)) {
+        countryCode = code;
+        break;
+      }
+    }
+    
+    if (!countryCode) {
+      console.log("validatePhoneNumber - no known country code found");
+      return false;
+    }
+    
+    // Country code'dan sonraki kısmı al (sadece rakamlar)
+    const afterCountryCode = cleanPhone.substring(countryCode.length);
+    const phoneNumberDigits = afterCountryCode.replace(/\D/g, "").length;
+    
+    console.log("validatePhoneNumber - countryCode:", countryCode, "afterCountryCode:", afterCountryCode, "phoneNumberDigits:", phoneNumberDigits);
+    
+    return phoneNumberDigits === 10;
+  };
 
   // Form doğrulama
-  const validateBusinessCardForm = (): boolean => {
+  const validateBusinessCardForm = (): { isValid: boolean; errors: Record<string, string> } => {
     const errors: Record<string, string> = {};
     if (!businessCardData.name.trim()) errors.name = "İsim soyisim gereklidir";
     if (!businessCardData.title.trim()) errors.title = "Meslek ünvanı gereklidir";
-    if (!businessCardData.phone.trim()) errors.phone = "Telefon numarası gereklidir";
-    if (!businessCardData.email.trim()) errors.email = "E-posta gereklidir";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(businessCardData.email)) {
-      errors.email = "Geçerli bir e-posta adresi girin";
+    
+    // Telefon numarası kontrolü - 10 haneli olmalı
+    if (!businessCardData.phone.trim()) {
+      errors.phone = "Telefon numarası gereklidir";
+    } else if (!validatePhoneNumber(businessCardData.phone)) {
+      errors.phone = "Lütfen telefon numarasını tam giriniz";
     }
+    
+    // Email kontrolü
+    if (!businessCardData.email.trim()) {
+      errors.email = "E-posta gereklidir";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(businessCardData.email)) {
+      errors.email = "Geçerli bir e-posta adresi girin";
+    } else if (!emailValidationAttempted) {
+      // Email formatı geçerli ama henüz doğrulanmamış
+      errors.email = "Lütfen emailin doğrulanmasını bekleyiniz";
+    } else if (!emailValidated) {
+      // Email doğrulanmaya çalışıldı ama geçersiz
+      errors.email = "Email adresi doğrulanamadı. Lütfen geçerli bir email adresi girin";
+    }
+    
     setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    return { isValid: Object.keys(errors).length === 0, errors };
   };
 
-  const validatePetIdForm = (): boolean => {
+  const validatePetIdForm = (): { isValid: boolean; errors: Record<string, string> } => {
     const errors: Record<string, string> = {};
     if (!petIdData.petName.trim()) errors.petName = "Evcil hayvan adı gereklidir";
     if (!petIdData.ownerName.trim()) errors.ownerName = "Sahibi adı gereklidir";
-    if (!petIdData.ownerPhone.trim()) errors.ownerPhone = "Sahibi telefonu gereklidir";
+    
+    // Telefon numarası kontrolü - 10 haneli olmalı
+    if (!petIdData.ownerPhone.trim()) {
+      errors.ownerPhone = "Telefon numarası gereklidir";
+    } else if (!validatePhoneNumber(petIdData.ownerPhone)) {
+      errors.ownerPhone = "Lütfen telefon numarasını tam giriniz";
+    }
+    
+    // Mikroçip numarası kontrolü - boşsa hata verme, doluysa 15 hane olmalı
+    if (petIdData.microchipNumber && petIdData.microchipNumber.trim().length > 0) {
+      const digitsOnly = petIdData.microchipNumber.replace(/\D/g, "");
+      if (digitsOnly.length !== 15) {
+        errors.microchipNumber = "Mikroçip numarası 15 haneli olmalıdır";
+      }
+    }
+    
     setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    return { isValid: Object.keys(errors).length === 0, errors };
   };
 
-  const validateRedirectForm = (): boolean => {
+  const validateRedirectForm = (): { isValid: boolean; errors: Record<string, string> } => {
     const errors: Record<string, string> = {};
     if (!redirectData.partnerName1.trim()) errors.partnerName1 = "1. kişi adı gereklidir";
     if (!redirectData.partnerName2.trim()) errors.partnerName2 = "2. kişi adı gereklidir";
     if (!redirectData.relationshipStartDate) errors.relationshipStartDate = "İlişki başlangıç tarihi gereklidir";
     setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    return { isValid: Object.keys(errors).length === 0, errors };
   };
 
   // Sepete ekleme işleyicisi
@@ -418,22 +685,34 @@ export default function ProductDetail() {
     }
   };
 
-  const handleFormSubmit = () => {
-    let isValid = false;
+  const handleFormSubmit = async () => {
+    // Aktif input'tan çık (blur event'ini tetikle)
+    const activeElement = document.activeElement as HTMLElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+      activeElement.blur();
+      // Blur event'lerinin ve validasyonların tamamlanması için kısa bir süre bekle
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    // State güncellemelerinin tamamlanması için bir sonraki render cycle'ı bekle
+    // React state güncellemeleri asenkron olduğu için biraz daha uzun bekleyelim
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    let validationResult: { isValid: boolean; errors: Record<string, string> } | null = null;
     let customizationData: any = null;
 
     if (nfcType === "business-card") {
-      isValid = validateBusinessCardForm();
-      if (isValid) customizationData = { type: "business-card", ...businessCardData };
+      validationResult = validateBusinessCardForm();
+      if (validationResult.isValid) customizationData = { type: "business-card", ...businessCardData };
     } else if (nfcType === "pet-id") {
-      isValid = validatePetIdForm();
-      if (isValid) customizationData = { type: "pet-id", ...petIdData };
+      validationResult = validatePetIdForm();
+      if (validationResult.isValid) customizationData = { type: "pet-id", ...petIdData };
     } else if (nfcType === "redirect") {
-      isValid = validateRedirectForm();
-      if (isValid) customizationData = { type: "redirect", ...redirectData };
+      validationResult = validateRedirectForm();
+      if (validationResult.isValid) customizationData = { type: "redirect", ...redirectData };
     }
 
-    if (isValid && customizationData) {
+    if (validationResult?.isValid && customizationData) {
       addProductToCart(customizationData);
       setIsFormOpen(false);
       // Formu sıfırla
@@ -441,24 +720,82 @@ export default function ProductDetail() {
       setPetIdData(defaultPetIdData);
       setRedirectData(defaultRedirectData);
       setFormErrors({});
+      // Email validasyon durumunu da sıfırla
+      setEmailValidated(false);
+      setEmailValidationAttempted(false);
+    } else if (validationResult) {
+      // Validasyon başarısız oldu, ilk hatalı alana scroll yap
+      scrollToFirstError(validationResult.errors);
     }
   };
 
+  // İlk hatalı alana scroll yapma fonksiyonu
+  const scrollToFirstError = (errors: Record<string, string>) => {
+    // State güncellemesinin tamamlanması için kısa bir süre bekle
+    setTimeout(() => {
+      let firstErrorField: string | null = null;
+      
+      // İlk hatayı bul (sıralama önemli - formdaki sıraya göre)
+      if (nfcType === "business-card") {
+        // BusinessCard form alan sırası: name, title, phone, email
+        if (errors.name) firstErrorField = "bc-name";
+        else if (errors.title) firstErrorField = "bc-title";
+        else if (errors.phone) firstErrorField = "bc-phone";
+        else if (errors.email) firstErrorField = "bc-email";
+      } else if (nfcType === "pet-id") {
+        // PetId form alan sırası: petName, ownerName, ownerPhone, microchipNumber
+        if (errors.petName) firstErrorField = "pet-name";
+        else if (errors.ownerName) firstErrorField = "owner-name";
+        else if (errors.ownerPhone) firstErrorField = "owner-phone";
+        else if (errors.microchipNumber) firstErrorField = "microchip";
+      } else if (nfcType === "redirect") {
+        // Redirect form alan sırası: partnerName1, partnerName2, relationshipStartDate
+        if (errors.partnerName1) firstErrorField = "partnerName1";
+        else if (errors.partnerName2) firstErrorField = "partnerName2";
+        else if (errors.relationshipStartDate) firstErrorField = "relationshipStartDate";
+      }
+
+      if (firstErrorField) {
+        const errorElement = document.getElementById(firstErrorField);
+        if (errorElement) {
+          // Input alanına scroll yap, merkeze al
+          errorElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+          // Input'a focus yap
+          errorElement.focus();
+        }
+      }
+    }, 100);
+  };
+
   const addProductToCart = (customization: any) => {
-    const totalPrice = product.price + (product.monthly_subscription_fee || 29);
+    // İndirimli fiyatı kullan
+    const finalPrice = getDiscountedPrice(product);
+    const baseCustomization: Record<string, unknown> = { renk: colors[selectedColor] };
+    if (requiresCustomization) {
+      baseCustomization.nfcType = nfcType;
+      if (hasSub) {
+        baseCustomization.subscriptionFee = product.monthly_subscription_fee || 29;
+        // 0 geçerli bir değerdir (bedava ay yok); bu yüzden || yerine ?? kullan
+        baseCustomization.freeSubscriptionMonths = product.free_subscription_months ?? 1;
+      }
+    }
+    // İndirim bilgisini de ekle
+    if (isDiscountActive(product)) {
+      baseCustomization.originalPrice = product.price;
+      baseCustomization.discountPercentage = product.discount_percentage;
+    }
+    if (customization) Object.assign(baseCustomization, customization);
     for (let i = 0; i < quantity; i++) {
       addToCart({
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: totalPrice, // Ürün + ilk ay abonelik
+        price: finalPrice,
         image: productImage,
-        customization: {
-          renk: colors[selectedColor],
-          nfcType: nfcType,
-          subscriptionFee: product.monthly_subscription_fee || 29,
-          ...customization
-        }
+        customization: { ...baseCustomization }
       });
     }
   };
@@ -482,13 +819,78 @@ export default function ProductDetail() {
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
-              className="bg-muted/30 rounded-3xl p-8 lg:p-12 flex items-center justify-center"
+              className="bg-muted/30 rounded-3xl p-8 lg:p-12 flex flex-col items-center justify-center relative overflow-hidden"
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
             >
-              <img
-                src={productImage}
-                alt={product.name}
-                className="w-full max-w-md object-contain"
-              />
+              {/* Image Container with Fade Animation */}
+              <div className="relative w-full max-w-md aspect-square flex items-center justify-center">
+                <AnimatePresence mode="wait">
+                  <motion.img
+                    key={currentImageIndex}
+                    src={currentProductImage}
+                    alt={`${product.name} - Görsel ${currentImageIndex + 1}`}
+                    className="w-full h-full object-contain"
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.15, ease: "easeOut" }}
+                  />
+                </AnimatePresence>
+              </div>
+              
+              {/* Discount Badge */}
+              {isDiscountActive(product) && (
+                <div className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1.5 rounded-lg shadow-lg">
+                  <span className="text-sm font-bold">%{product.discount_percentage} İNDİRİM</span>
+                </div>
+              )}
+              
+              {/* Image Counter */}
+              {productImages.length > 1 && (
+                <div className="absolute top-4 right-4 bg-background/90 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium text-muted-foreground">
+                  {currentImageIndex + 1} / {productImages.length}
+                </div>
+              )}
+              
+              {/* Image Pagination Dots */}
+              {productImages.length > 1 && (
+                <div className="flex gap-2 mt-6">
+                  {productImages.map((_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentImageIndex(index)}
+                      className={`h-2 rounded-full transition-all duration-300 ${
+                        currentImageIndex === index
+                          ? "bg-primary w-8"
+                          : "bg-muted-foreground/30 hover:bg-muted-foreground/50 w-2"
+                      }`}
+                      aria-label={`Görsel ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
+              
+              {/* Navigation Arrows - Daha belirgin ve büyük */}
+              {productImages.length > 1 && (
+                <>
+                  <button
+                    onClick={goToPreviousImage}
+                    className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 md:w-14 md:h-14 rounded-full bg-background/95 hover:bg-background backdrop-blur-sm border-2 border-border hover:border-primary flex items-center justify-center transition-all hover:scale-110 shadow-lg z-10 group"
+                    aria-label="Önceki görsel"
+                  >
+                    <ChevronLeft className="w-6 h-6 md:w-7 md:h-7 text-foreground group-hover:text-primary transition-colors" />
+                  </button>
+                  <button
+                    onClick={goToNextImage}
+                    className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 w-12 h-12 md:w-14 md:h-14 rounded-full bg-background/95 hover:bg-background backdrop-blur-sm border-2 border-border hover:border-primary flex items-center justify-center transition-all hover:scale-110 shadow-lg z-10 group"
+                    aria-label="Sonraki görsel"
+                  >
+                    <ChevronRight className="w-6 h-6 md:w-7 md:h-7 text-foreground group-hover:text-primary transition-colors" />
+                  </button>
+                </>
+              )}
             </motion.div>
 
             {/* Product Info */}
@@ -503,23 +905,59 @@ export default function ProductDetail() {
 
               <h1 className="text-3xl lg:text-4xl font-bold mb-4">{product.name}</h1>
               
-              <p className="text-muted-foreground mb-6">
-                {longDescription}
-              </p>
+              <div
+                className="text-muted-foreground mb-6 [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_ul]:my-2 [&_ol]:my-2 [&_li]:mb-1"
+                dangerouslySetInnerHTML={{ __html: longDescriptionHtml }}
+              />
 
               {/* Price */}
               <div className="mb-6">
-                <div className="flex items-baseline gap-3">
-                  <span className="text-4xl font-bold text-gradient">
-                    ₺{(product.price + (product.monthly_subscription_fee || 29)).toFixed(0)}
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground mt-1">
-                  ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik dahil)
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Sonraki aylar: ₺{product.monthly_subscription_fee || 29}/ay
-                </p>
+                {/* İndirim Badge ve Fiyat */}
+                {isDiscountActive(product) ? (
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 bg-red-500 text-white px-3 py-1 rounded-lg">
+                      <span className="text-sm font-bold">%{product.discount_percentage} İNDİRİM</span>
+                    </div>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-2xl text-muted-foreground line-through">
+                        ₺{product.price.toFixed(0)}
+                      </span>
+                      <span className="text-4xl font-bold text-red-500">
+                        ₺{getDiscountedPrice(product)}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-4xl font-bold text-gradient">
+                      ₺{product.price.toFixed(0)}
+                    </span>
+                  </div>
+                )}
+                
+                {hasSub ? (
+                  <div className="mt-3 space-y-3">
+                    <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+                          <Check className="w-4 h-4 text-white" />
+                        </div>
+                        <p className="text-sm font-semibold text-green-700 dark:text-green-400">
+                          {product.free_subscription_months || 1} Ay Bedava Abonelik Dahil!
+                        </p>
+                      </div>
+                      <p className="text-sm text-muted-foreground pl-8">
+                        Sadece ürün fiyatını ödeyin, ilk {product.free_subscription_months || 1} ay abonelik bizden hediye.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-muted text-xs font-medium">i</span>
+                      <span>{product.free_subscription_months || 1} ay sonra aylık ₺{product.monthly_subscription_fee || 29} abonelik ücreti başlar</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-1">Tek seferlik ödeme, abonelik yok</p>
+                )}
               </div>
 
               {/* Color Selection */}
@@ -570,7 +1008,7 @@ export default function ProductDetail() {
               {/* Add to Cart */}
               <Button size="lg" className="w-full mb-6" onClick={handleAddToCartClick}>
                 <ShoppingCart className="w-5 h-5 mr-2" />
-                {requiresCustomization ? "Bilgileri Gir ve Sepete Ekle" : "Sepete Ekle"} - ₺{((product.price + (product.monthly_subscription_fee || 29)) * quantity).toFixed(0)}
+                {requiresCustomization ? "Bilgileri Gir ve Sepete Ekle" : "Sepete Ekle"} - ₺{(getDiscountedPrice(product) * quantity).toFixed(0)}
               </Button>
               
               {requiresCustomization && (
@@ -867,6 +1305,25 @@ export default function ProductDetail() {
                 data={businessCardData}
                 onChange={setBusinessCardData}
                 errors={formErrors}
+                onEmailValidationChange={(attempted, isValid) => {
+                  setEmailValidationAttempted(attempted);
+                  setEmailValidated(isValid);
+                }}
+                onErrorClear={(field) => {
+                  if (formErrors[field]) {
+                    setFormErrors(prev => {
+                      const newErrors = { ...prev };
+                      delete newErrors[field];
+                      return newErrors;
+                    });
+                  }
+                }}
+                onErrorSet={(field, message) => {
+                  setFormErrors(prev => ({
+                    ...prev,
+                    [field]: message
+                  }));
+                }}
               />
             )}
             {nfcType === "pet-id" && (
@@ -874,6 +1331,21 @@ export default function ProductDetail() {
                 data={petIdData}
                 onChange={setPetIdData}
                 errors={formErrors}
+                onErrorClear={(field) => {
+                  if (formErrors[field]) {
+                    setFormErrors(prev => {
+                      const newErrors = { ...prev };
+                      delete newErrors[field];
+                      return newErrors;
+                    });
+                  }
+                }}
+                onErrorSet={(field, message) => {
+                  setFormErrors(prev => ({
+                    ...prev,
+                    [field]: message
+                  }));
+                }}
               />
             )}
             {nfcType === "redirect" && (
@@ -881,6 +1353,15 @@ export default function ProductDetail() {
                 data={redirectData}
                 onChange={setRedirectData}
                 errors={formErrors}
+                onErrorClear={(field) => {
+                  if (formErrors[field]) {
+                    setFormErrors(prev => {
+                      const newErrors = { ...prev };
+                      delete newErrors[field];
+                      return newErrors;
+                    });
+                  }
+                }}
               />
             )}
           </div>
@@ -891,7 +1372,7 @@ export default function ProductDetail() {
             </Button>
             <Button variant="hero" onClick={handleFormSubmit}>
               <ShoppingCart className="w-4 h-4 mr-2" />
-              Sepete Ekle - ₺{((product.price + (product.monthly_subscription_fee || 29)) * quantity).toFixed(0)}
+              Sepete Ekle - ₺{(getDiscountedPrice(product) * quantity).toFixed(0)}
             </Button>
           </DialogFooter>
         </DialogContent>

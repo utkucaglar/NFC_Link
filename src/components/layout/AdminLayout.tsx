@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Package,
   ShoppingCart,
-  Tag,
   Users,
   Settings,
   LogOut,
@@ -31,9 +30,9 @@ const menuItems = [
   { name: "Siparişler", path: "/admin/orders", icon: ShoppingCart },
   { name: "Ürünler", path: "/admin/products", icon: Package },
   { name: "Abonelikler", path: "/admin/subscriptions", icon: CreditCard },
-  { name: "İndirimler", path: "/admin/discounts", icon: Tag },
   { name: "Değerlendirmeler", path: "/admin/reviews", icon: Star },
   { name: "Destek", path: "/admin/support", icon: MessageSquare },
+  { name: "Ayarlar", path: "/admin/settings", icon: Settings },
 ];
 
 export function AdminLayout({ children }: AdminLayoutProps) {

@@ -1,14 +1,26 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { Mail, Lock, User, Eye, EyeOff, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export default function Login() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectTo = searchParams.get("redirect") || "/";
+  
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,8 +34,10 @@ export default function Login() {
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [resendCountdown, setResendCountdown] = useState(0);
   const [resendLoading, setResendLoading] = useState(false);
-  const { signIn, signUp } = useAuth();
-  const navigate = useNavigate();
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+  const { signIn, signUp, resetPassword } = useAuth();
 
   // Countdown timer for resend button
   useEffect(() => {
@@ -83,6 +97,12 @@ export default function Login() {
     try {
       const redirectUrl = `${window.location.origin}/auth/callback`;
       
+      // Supabase'in resend fonksiyonu email confirmation disabled olduğu için çalışmayabilir
+      // Alternatif: Resend ile direkt email gönder
+      // Ama confirmation token'ını alamayız, bu yüzden kullanıcıyı tekrar kayıt etmek gerekir
+      
+      // Şimdilik: Supabase'in resend fonksiyonunu kullan
+      // Email confirmation disabled ise bu çalışmayabilir
       const { error } = await supabase.auth.resend({
         type: 'signup',
         email: email,
@@ -94,7 +114,7 @@ export default function Login() {
       if (error) throw error;
 
       toast.success("Doğrulama e-postası tekrar gönderildi!");
-      setResendCountdown(60); // 60 saniye beklet (Supabase sınırı)
+      setResendCountdown(60); // 60 saniye beklet
     } catch (error: any) {
       console.error('Resend error:', error);
       const turkishMessage = translateError(error.message || "E-posta gönderilemedi. Lütfen tekrar deneyin.");
@@ -107,6 +127,25 @@ export default function Login() {
       }
     } finally {
       setResendLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!forgotPasswordEmail || !forgotPasswordEmail.includes('@')) {
+      toast.error("Geçerli bir e-posta adresi girin");
+      return;
+    }
+
+    setForgotPasswordLoading(true);
+    try {
+      // Email'i lowercase'e çevir
+      await resetPassword(forgotPasswordEmail.toLowerCase().trim());
+      setShowForgotPassword(false);
+      setForgotPasswordEmail("");
+    } catch (error) {
+      // Error is already handled in auth context
+    } finally {
+      setForgotPasswordLoading(false);
     }
   };
 
@@ -147,10 +186,13 @@ export default function Login() {
 
     try {
       if (isLogin) {
-        await signIn(email, password);
-        navigate("/");
+        // Email'i lowercase'e çevir
+        await signIn(email.toLowerCase().trim(), password);
+        // Redirect parametresine göre yönlendir
+        navigate(redirectTo);
       } else {
-        await signUp(email, password, firstName, lastName);
+        // Email'i lowercase'e çevir
+        await signUp(email.toLowerCase().trim(), password, firstName, lastName);
         setShowVerification(true);
         setPassword("");
         setConfirmPassword("");
@@ -257,8 +299,12 @@ export default function Login() {
       >
         {/* Logo */}
         <Link to="/" className="flex items-center justify-center gap-2 mb-8">
-          <div className="w-10 h-10 bg-gradient-to-br from-primary to-accent rounded-xl flex items-center justify-center">
-            <span className="text-2xl font-bold text-primary-foreground">N</span>
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden">
+            <img 
+              src="/esdodesign_logo.png" 
+              alt="Esdodesign Logo" 
+              className="w-full h-full object-contain"
+            />
           </div>
           <span className="text-2xl font-bold text-gradient">Esdodesign</span>
         </Link>
@@ -417,6 +463,7 @@ export default function Login() {
               <div className="flex items-center justify-end">
                 <button
                   type="button"
+                  onClick={() => setShowForgotPassword(true)}
                   className="text-sm text-primary hover:underline"
                 >
                   Şifremi Unuttum
@@ -461,11 +508,68 @@ export default function Login() {
               to="/"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
-              Misafir olarak devam et →
+              Ana sayfaya Geri Dön →
             </Link>
           </div>
         </div>
       </motion.div>
+
+      {/* Forgot Password Dialog */}
+      <Dialog open={showForgotPassword} onOpenChange={setShowForgotPassword}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Şifremi Unuttum</DialogTitle>
+            <DialogDescription>
+              E-posta adresinizi girin, size şifre sıfırlama bağlantısı gönderelim.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">E-posta</label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                <Input
+                  type="email"
+                  placeholder="ornek@email.com"
+                  value={forgotPasswordEmail}
+                  onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                  className="pl-10"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleForgotPassword();
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowForgotPassword(false);
+                setForgotPasswordEmail("");
+              }}
+              disabled={forgotPasswordLoading}
+            >
+              İptal
+            </Button>
+            <Button
+              onClick={handleForgotPassword}
+              disabled={forgotPasswordLoading || !forgotPasswordEmail}
+            >
+              {forgotPasswordLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Gönderiliyor...
+                </>
+              ) : (
+                "Gönder"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

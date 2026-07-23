@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { useNavigate } from "react-router-dom";
-import { User, Mail, Phone, MapPin, CreditCard, Bell, Shield, LogOut, Plus, Edit, Trash2, Loader2 } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { User, Mail, Phone, MapPin, CreditCard, Bell, Shield, LogOut, Plus, Edit, Trash2, Loader2, Star, ChevronDown } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,8 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { ShippingAddress } from "@/lib/supabase";
+import { supabase, ShippingAddress } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -37,9 +38,97 @@ interface Payment {
   paid_at: string | null;
 }
 
+const countryCodes = [
+  { code: "+90", country: "Türkiye", isoCode: "TR" },
+  { code: "+1", country: "ABD/Kanada", isoCode: "US" },
+  { code: "+44", country: "İngiltere", isoCode: "GB" },
+  { code: "+49", country: "Almanya", isoCode: "DE" },
+  { code: "+33", country: "Fransa", isoCode: "FR" },
+  { code: "+39", country: "İtalya", isoCode: "IT" },
+  { code: "+34", country: "İspanya", isoCode: "ES" },
+  { code: "+31", country: "Hollanda", isoCode: "NL" },
+  { code: "+32", country: "Belçika", isoCode: "BE" },
+  { code: "+41", country: "İsviçre", isoCode: "CH" },
+  { code: "+43", country: "Avusturya", isoCode: "AT" },
+  { code: "+46", country: "İsveç", isoCode: "SE" },
+  { code: "+47", country: "Norveç", isoCode: "NO" },
+  { code: "+45", country: "Danimarka", isoCode: "DK" },
+  { code: "+358", country: "Finlandiya", isoCode: "FI" },
+  { code: "+7", country: "Rusya", isoCode: "RU" },
+  { code: "+86", country: "Çin", isoCode: "CN" },
+  { code: "+81", country: "Japonya", isoCode: "JP" },
+  { code: "+82", country: "Güney Kore", isoCode: "KR" },
+  { code: "+91", country: "Hindistan", isoCode: "IN" },
+  { code: "+971", country: "BAE", isoCode: "AE" },
+  { code: "+966", country: "Suudi Arabistan", isoCode: "SA" },
+  { code: "+20", country: "Mısır", isoCode: "EG" },
+  { code: "+27", country: "Güney Afrika", isoCode: "ZA" },
+  { code: "+61", country: "Avustralya", isoCode: "AU" },
+  { code: "+64", country: "Yeni Zelanda", isoCode: "NZ" },
+  { code: "+55", country: "Brezilya", isoCode: "BR" },
+  { code: "+52", country: "Meksika", isoCode: "MX" },
+  { code: "+54", country: "Arjantin", isoCode: "AR" },
+].sort((a, b) => {
+  // Türkiye'yi en üste al
+  if (a.code === "+90") return -1;
+  if (b.code === "+90") return 1;
+  // Diğerlerini alfabetik sırala
+  return a.country.localeCompare(b.country);
+});
+
+// Bayrak resmi URL'sini oluştur
+const getFlagUrl = (isoCode: string) => {
+  return `https://flagcdn.com/w20/${isoCode.toLowerCase()}.png`;
+};
+
+// Parse phone number from database
+// Supports both formats: "+901234567890" (new) and "+90 123 456 78 90" (old/legacy)
+// Returns: { countryCode: "+90", phoneNumber: "5538064115" }
+const parsePhone = (phone: string) => {
+  if (!phone) return { countryCode: "+90", phoneNumber: "" };
+  
+  // Remove all spaces first
+  const cleanPhone = phone.replace(/\s/g, "");
+  
+  // Bilinen country code'ları kontrol et (uzun olanlardan başla)
+  const countryCodes = [
+    "+358", "+971", "+966", // 3 haneli (önce kontrol et)
+    "+90", "+44", "+49", "+33", "+39", "+34", "+31", "+32", "+41", "+43", "+46", "+47", "+45", "+86", "+81", "+82", "+91", "+20", "+27", "+61", "+64", "+55", "+52", "+54", // 2 haneli
+    "+1", "+7" // 1 haneli (en son kontrol et)
+  ];
+  
+  // Country code'u bul (uzun olanlardan başla)
+  let countryCode = "";
+  for (const code of countryCodes) {
+    if (cleanPhone.startsWith(code)) {
+      countryCode = code;
+      break;
+    }
+  }
+  
+  if (countryCode) {
+    // Country code'dan sonraki kısmı al (sadece rakamlar)
+    const afterCountryCode = cleanPhone.substring(countryCode.length);
+    const phoneNumber = afterCountryCode.replace(/\D/g, "");
+    return { countryCode, phoneNumber };
+  }
+  
+  // Legacy format with spaces: "+90 123 456 78 90"
+  const legacyMatch = phone.match(/^(\+\d+)\s*(.+)$/);
+  if (legacyMatch) {
+    const phoneNum = legacyMatch[2].replace(/\s/g, "");
+    return { countryCode: legacyMatch[1], phoneNumber: phoneNum };
+  }
+  
+  // If no country code found, assume it's just the number (default to Turkey)
+  const phoneNum = cleanPhone.replace(/^\+/, "");
+  return { countryCode: "+90", phoneNumber: phoneNum };
+};
+
 export default function Profile() {
   const { user, profile, loading, signOut, updateProfile, updatePassword } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Profile data
   const [firstName, setFirstName] = useState("");
@@ -48,6 +137,15 @@ export default function Profile() {
   const [phone, setPhone] = useState("");
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  
+  // Phone number state
+  const { countryCode: initialCountryCode, phoneNumber: initialPhoneNumber } = parsePhone(phone);
+  const [countryCode, setCountryCode] = useState(initialCountryCode);
+  const [phoneNumber, setPhoneNumber] = useState(initialPhoneNumber);
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
+  const isUserTypingPhoneRef = useRef(false);
+  const lastPhoneValueRef = useRef(phone);
   
   // Backup for cancel
   const [originalProfile, setOriginalProfile] = useState({ firstName: "", lastName: "", phone: "" });
@@ -88,6 +186,32 @@ export default function Profile() {
     }
   }, [user, loading, navigate]);
 
+  // Check for missing fields from URL parameter (from checkout redirect)
+  useEffect(() => {
+    const missingParam = searchParams.get("missing");
+    if (missingParam) {
+      const missingFields = missingParam.split(",");
+      const missingText = missingFields
+        .map(field => {
+          if (field === "isim") return "İsim";
+          if (field === "soyisim") return "Soyisim";
+          if (field === "telefon numarası") return "Telefon Numarası";
+          return field;
+        })
+        .join(", ");
+      
+      toast.info(`Ödeme yapmak için eksik bilgilerinizi tamamlamanız gerekiyor: ${missingText}`, {
+        duration: 5000,
+      });
+      
+      // Otomatik olarak düzenleme modunu aç
+      setIsEditingProfile(true);
+      
+      // URL'den parametreyi temizle (tekrar gösterilmemesi için)
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   // Load profile data
   useEffect(() => {
     if (profile) {
@@ -100,10 +224,44 @@ export default function Profile() {
       setEmail(profile.email || "");
       setPhone(phoneNum);
       
+      // Parse phone number for display
+      const parsed = parsePhone(phoneNum);
+      setCountryCode(parsed.countryCode);
+      setPhoneNumber(parsed.phoneNumber);
+      lastPhoneValueRef.current = phoneNum;
+      
       // Backup original values
       setOriginalProfile({ firstName: first, lastName: last, phone: phoneNum });
     }
   }, [profile]);
+
+  // Update local phone state when phone changes externally (not from user typing)
+  useEffect(() => {
+    // Only sync if the change came from outside (not from user typing)
+    if (!isUserTypingPhoneRef.current && phone !== lastPhoneValueRef.current) {
+      const parsed = parsePhone(phone);
+      setCountryCode(parsed.countryCode);
+      setPhoneNumber(parsed.phoneNumber);
+      lastPhoneValueRef.current = phone;
+    }
+  }, [phone]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isCountryDropdownOpen) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.country-selector-container')) {
+          setIsCountryDropdownOpen(false);
+        }
+      }
+    };
+
+    if (isCountryDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isCountryDropdownOpen]);
 
   // Fetch shipping addresses
   useEffect(() => {
@@ -119,26 +277,19 @@ export default function Profile() {
     
     setLoadingAddresses(true);
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const { data, error } = await supabase
+        .from('shipping_addresses')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true) // Sadece aktif adresleri getir
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false });
 
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/shipping_addresses?user_id=eq.${user.id}&select=*&order=is_default.desc,created_at.desc`,
-        {
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setAddresses(data || []);
-      }
+      if (error) throw error;
+      setAddresses(data || []);
     } catch (error) {
       console.error('Error fetching addresses:', error);
+      toast.error('Adresler yüklenemedi');
     } finally {
       setLoadingAddresses(false);
     }
@@ -217,6 +368,16 @@ export default function Profile() {
       return;
     }
 
+    // Phone validation - if phone is provided, it must be valid
+    if (phone.trim()) {
+      // Phone is stored as countryCode + phoneNumber (e.g., +905538064115)
+      // Check if phoneNumber has 10 digits (for Turkish format)
+      if (!phoneNumber || phoneNumber.length !== 10) {
+        toast.error("Lütfen telefon numarasını tam giriniz");
+        return;
+      }
+    }
+
     if (savingProfile) {
       console.warn('Already saving, ignoring duplicate call');
       return;
@@ -226,10 +387,14 @@ export default function Profile() {
     console.log('Starting profile update...');
 
     try {
+      // Phone is already in format: countryCode + phoneNumber (e.g., +905538064115)
+      // No spaces, ready for database
+      const cleanedPhone = phone.trim() || null;
+      
       const updateData = {
         first_name: firstName.trim(),
         last_name: lastName.trim(),
-        phone: phone.trim() || null,
+        phone: cleanedPhone,
         full_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
       };
       
@@ -247,6 +412,18 @@ export default function Profile() {
       });
       setIsEditingProfile(false);
       
+      // Check if user came from checkout (missing parameter was present)
+      const cameFromCheckout = searchParams.get("missing") !== null;
+      if (cameFromCheckout) {
+        // Clear the missing parameter
+        setSearchParams({}, { replace: true });
+        // Navigate back to checkout after a short delay
+        setTimeout(() => {
+          toast.success("Profil bilgileriniz güncellendi. Ödeme sayfasına yönlendiriliyorsunuz...");
+          navigate("/checkout");
+        }, 1000);
+      }
+      
       // toast.success is already shown in updateProfile
     } catch (error: any) {
       console.error('Save profile error:', error);
@@ -263,8 +440,72 @@ export default function Profile() {
     setFirstName(originalProfile.firstName);
     setLastName(originalProfile.lastName);
     setPhone(originalProfile.phone);
+    
+    // Restore phone number state
+    const parsed = parsePhone(originalProfile.phone);
+    setCountryCode(parsed.countryCode);
+    setPhoneNumber(parsed.phoneNumber);
+    lastPhoneValueRef.current = originalProfile.phone;
+    
     setIsEditingProfile(false);
   };
+
+  const formatPhoneNumber = (value: string): string => {
+    // Remove all non-digits
+    const digits = value.replace(/\D/g, "");
+    // Format as: 123 456 78 90 (3-3-2-2)
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+    if (digits.length <= 8) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 8)} ${digits.slice(8, 10)}`;
+  };
+
+  const handlePhoneNumberChange = (value: string) => {
+    // Mark that user is typing to prevent useEffect from overwriting
+    isUserTypingPhoneRef.current = true;
+    
+    // Remove all non-digits
+    const digits = value.replace(/\D/g, "");
+    // Limit to 10 digits for Turkish format
+    const limitedDigits = digits.slice(0, 10);
+    setPhoneNumber(limitedDigits);
+    
+    // Update the phone field with country code + number (NO SPACES for database)
+    // Database format: +905538064115
+    // Display format: +90 123 456 78 90 (handled in UI)
+    const fullPhone = countryCode && limitedDigits ? `${countryCode}${limitedDigits}` : "";
+    lastPhoneValueRef.current = fullPhone;
+    setPhone(fullPhone);
+    
+    // Reset typing flag after a short delay to allow for continuous typing
+    setTimeout(() => {
+      isUserTypingPhoneRef.current = false;
+    }, 100);
+  };
+
+  const handleCountryCodeChange = (newCountryCode: string) => {
+    setCountryCode(newCountryCode);
+    setIsCountryDropdownOpen(false);
+    // Update the phone field with new country code + existing number (NO SPACES)
+    // Database format: +905538064115
+    const fullPhone = phoneNumber ? `${newCountryCode}${phoneNumber}` : "";
+    lastPhoneValueRef.current = fullPhone;
+    setPhone(fullPhone);
+  };
+
+  const handlePhoneNumberFocus = () => {
+    setPhoneTouched(true);
+  };
+
+  const handlePhoneNumberBlur = () => {
+    // Eğer input'a bir kez tıklandıysa (touched) ve telefon numarası boşsa veya eksikse hata göster
+    if (phoneTouched && phoneNumber && phoneNumber.length !== 10) {
+      // Phone number is incomplete
+      // We don't show error here as phone is optional in profile
+    }
+  };
+
+  const selectedCountry = countryCodes.find(c => c.code === countryCode) || countryCodes[0];
 
   const handleChangePassword = async () => {
     if (passwordData.new !== passwordData.confirm) {
@@ -288,42 +529,66 @@ export default function Profile() {
   const handleSaveAddress = async () => {
     if (!user) return;
 
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    // Validation
+    if (!addressForm.first_name.trim() || !addressForm.last_name.trim()) {
+      toast.error("İsim ve soyisim gereklidir");
+      return;
+    }
+    if (!addressForm.phone.trim()) {
+      toast.error("Telefon numarası gereklidir");
+      return;
+    }
+    const phoneNumber = addressForm.phone.replace(/\s/g, '');
+    if (!/^0[0-9]{10}$/.test(phoneNumber)) {
+      toast.error("Telefon numarası 0 ile başlamalı ve 11 haneli olmalıdır (örn: 05XXXXXXXXX)");
+      return;
+    }
+    if (!addressForm.address_line1.trim()) {
+      toast.error("Adres gereklidir");
+      return;
+    }
+    if (!addressForm.city.trim()) {
+      toast.error("İl gereklidir");
+      return;
+    }
+    if (!addressForm.postal_code.trim()) {
+      toast.error("Posta kodu gereklidir");
+      return;
+    }
 
+    try {
       const addressData = {
         ...addressForm,
         user_id: user.id,
         is_default: addresses.length === 0, // İlk adres ise default olsun
+        is_active: true, // Yeni eklenen adresler aktif olmalı
       };
 
-      const url = editingAddress
-        ? `${supabaseUrl}/rest/v1/shipping_addresses?id=eq.${editingAddress.id}`
-        : `${supabaseUrl}/rest/v1/shipping_addresses`;
+      if (editingAddress) {
+        // Update existing address
+        // is_active'i güncelleme verisinden çıkarıyoruz (sadece düzenleme için)
+        const { is_active, ...updateData } = addressData;
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .update(updateData)
+          .eq('id', editingAddress.id);
 
-      const method = editingAddress ? 'PATCH' : 'POST';
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation',
-        },
-        body: JSON.stringify(addressData),
-      });
-
-      if (response.ok) {
-        toast.success(editingAddress ? "Adres güncellendi" : "Adres eklendi");
-        setIsAddAddressOpen(false);
-        setEditingAddress(null);
-        resetAddressForm();
-        fetchAddresses();
+        if (error) throw error;
+        toast.success("Adres güncellendi");
       } else {
-        throw new Error('Adres kaydedilemedi');
+        // Insert new address
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .insert(addressData);
+
+        if (error) throw error;
+        toast.success("Adres eklendi");
       }
+
+      setIsAddAddressOpen(false);
+      setEditingAddress(null);
+      resetAddressForm();
+      fetchAddresses();
     } catch (error: any) {
       console.error('Error saving address:', error);
       toast.error(error.message || "Adres kaydedilemedi");
@@ -331,33 +596,136 @@ export default function Profile() {
   };
 
   const handleDeleteAddress = async (addressId: string) => {
-    if (!confirm("Bu adresi silmek istediğinizden emin misiniz?")) return;
+    if (!user) return;
+    
+    // Adresin siparişlerde kullanılıp kullanılmadığını kontrol et
+    const addressToDelete = addresses.find(addr => addr.id === addressId);
+    const isDefault = addressToDelete?.is_default;
+    
+    // Siparişlerde kullanılıp kullanılmadığını kontrol et
+    const { data: ordersUsingAddress, error: checkError } = await supabase
+      .from('orders')
+      .select('id, order_number')
+      .eq('shipping_address_id', addressId)
+      .limit(1);
+
+    if (checkError) {
+      console.error('Error checking address usage:', checkError);
+    }
+
+    const isUsedInOrders = ordersUsingAddress && ordersUsingAddress.length > 0;
+    
+    const confirmMessage = isUsedInOrders
+      ? "Bu adres siparişlerinizde kullanıldığı için silinemez, ancak gizlenebilir. Gizlemek istiyor musunuz?"
+      : "Bu adresi silmek istediğinizden emin misiniz?";
+    
+    if (!confirm(confirmMessage)) return;
 
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if (isUsedInOrders) {
+        // Siparişlerde kullanılmış adres: Soft delete (gizle, sipariş geçmişi korunur)
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', addressId)
+          .eq('user_id', user.id);
 
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/shipping_addresses?id=eq.${addressId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-          },
+        if (error) {
+          console.error('Soft delete address error:', error);
+          console.error('Error details:', JSON.stringify(error, null, 2));
+          
+          // RLS hatası kontrolü
+          if (error.message?.includes('row-level security') || error.message?.includes('RLS') || error.code === '42501') {
+            const errorMsg = `RLS hatası alındı. Lütfen Supabase SQL Editor'da önce '23_rollback_shipping_addresses_soft_delete.sql' sonra '23_shipping_addresses_soft_delete_proper.sql' dosyalarını çalıştırın. 
+            
+Hata: ${error.message || error.code}`;
+            toast.error(errorMsg, { duration: 10000 });
+            console.error('RLS Policy Error Details:', {
+              message: error.message,
+              code: error.code,
+              details: error.details,
+              hint: error.hint,
+              fullError: error
+            });
+          } else {
+            toast.error(error.message || "Adres gizlenemedi");
+          }
+          return;
         }
-      );
 
-      if (response.ok) {
         toast.success("Adres silindi");
-        fetchAddresses();
       } else {
-        throw new Error('Adres silinemedi');
+        // Siparişlerde kullanılmamış adres: Hard delete (gerçekten sil)
+        // Önce varsayılan adres kontrolü yap
+        if (isDefault) {
+          const remainingAddresses = addresses.filter(addr => addr.id !== addressId);
+          if (remainingAddresses.length > 0) {
+            await supabase
+              .from('shipping_addresses')
+              .update({ is_default: true })
+              .eq('id', remainingAddresses[0].id)
+              .eq('user_id', user.id);
+          }
+        }
+
+        const { error } = await supabase
+          .from('shipping_addresses')
+          .delete()
+          .eq('id', addressId)
+          .eq('user_id', user.id);
+
+        if (error) {
+          console.error('Hard delete address error:', error);
+          console.error('Error details:', JSON.stringify(error, null, 2));
+          
+          // RLS hatası kontrolü
+          if (error.message?.includes('row-level security') || error.message?.includes('RLS') || error.code === '42501') {
+            const errorMsg = `RLS hatası alındı. Lütfen Supabase SQL Editor'da '23_shipping_addresses_soft_delete_proper.sql' dosyasının DELETE politikasını kontrol edin. 
+            
+Hata: ${error.message || error.code}`;
+            toast.error(errorMsg, { duration: 10000 });
+          } else {
+            toast.error(error.message || "Adres silinemedi");
+          }
+          return;
+        }
+
+        toast.success("Adres silindi");
       }
+
+      fetchAddresses();
     } catch (error: any) {
       console.error('Error deleting address:', error);
-      toast.error("Adres silinemedi");
+      const errorMessage = error?.message || "Adres silinemedi";
+      toast.error(errorMessage);
+    }
+  };
+
+  const handleSetDefaultAddress = async (addressId: string) => {
+    if (!user) return;
+
+    try {
+      // Önce tüm adreslerin is_default değerini false yap
+      const { error: updateAllError } = await supabase
+        .from('shipping_addresses')
+        .update({ is_default: false })
+        .eq('user_id', user.id);
+
+      if (updateAllError) throw updateAllError;
+
+      // Sonra seçilen adresi varsayılan yap
+      const { error: updateError } = await supabase
+        .from('shipping_addresses')
+        .update({ is_default: true })
+        .eq('id', addressId);
+
+      if (updateError) throw updateError;
+      
+      toast.success("Varsayılan adres güncellendi");
+      fetchAddresses();
+    } catch (error: any) {
+      console.error('Error setting default address:', error);
+      toast.error("Varsayılan adres ayarlanamadı");
     }
   };
 
@@ -486,15 +854,134 @@ export default function Profile() {
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="phone">Telefon</Label>
-                  <Input 
-                    id="phone" 
-                    type="tel" 
-                    value={phone || ""}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="05XX XXX XX XX"
-                    disabled={!isEditingProfile}
-                    className={!isEditingProfile ? "bg-muted/50 cursor-not-allowed" : ""}
-                  />
+                  <div className="relative country-selector-container">
+                    {/* Hidden select for form submission */}
+                    <select
+                      value={countryCode}
+                      onChange={(e) => handleCountryCodeChange(e.target.value)}
+                      className="sr-only"
+                      aria-hidden="true"
+                      tabIndex={-1}
+                      disabled={!isEditingProfile}
+                    >
+                      {countryCodes.map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.country} {country.code}
+                        </option>
+                      ))}
+                    </select>
+                    
+                    {/* Combined Input */}
+                    <div className={cn(
+                      "flex items-center h-10 w-full rounded-md border border-input bg-background",
+                      "focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2",
+                      !isEditingProfile && "bg-muted/50 cursor-not-allowed"
+                    )}>
+                      {/* Country Code Selector */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => isEditingProfile && setIsCountryDropdownOpen(!isCountryDropdownOpen)}
+                          disabled={!isEditingProfile}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 h-10 border-r border-input",
+                            "hover:bg-muted/50 transition-colors",
+                            "focus:outline-none",
+                            !isEditingProfile && "cursor-not-allowed"
+                          )}
+                        >
+                          <img 
+                            src={getFlagUrl(selectedCountry.isoCode)}
+                            alt={selectedCountry.country}
+                            className="w-5 h-4 object-cover rounded-sm"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                          <span className="text-sm font-medium">{selectedCountry.code}</span>
+                          {isEditingProfile && (
+                            <ChevronDown className={cn(
+                              "w-3 h-3 text-muted-foreground transition-transform",
+                              isCountryDropdownOpen && "rotate-180"
+                            )} />
+                          )}
+                        </button>
+                        
+                        {/* Dropdown Menu */}
+                        {isCountryDropdownOpen && isEditingProfile && (
+                          <>
+                            <div 
+                              className="fixed inset-0 z-10" 
+                              onClick={() => setIsCountryDropdownOpen(false)}
+                            />
+                            <div className="absolute top-full left-0 mt-1 z-20 w-[200px] max-h-[300px] overflow-y-auto rounded-md border border-input bg-background shadow-lg">
+                              {countryCodes.map((country) => (
+                                <button
+                                  key={country.code}
+                                  type="button"
+                                  onClick={() => handleCountryCodeChange(country.code)}
+                                  className={cn(
+                                    "w-full flex items-center gap-2 px-3 py-2 text-sm text-left",
+                                    "hover:bg-muted transition-colors",
+                                    country.code === countryCode && "bg-muted font-medium"
+                                  )}
+                                >
+                                  <img 
+                                    src={getFlagUrl(country.isoCode)}
+                                    alt={country.country}
+                                    className="w-5 h-4 object-cover rounded-sm flex-shrink-0"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none';
+                                    }}
+                                  />
+                                  <span className="flex-1">{country.code}</span>
+                                  <span className="text-xs text-muted-foreground">{country.country}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      
+                      {/* Phone Number Input */}
+                      <div className="relative flex-1">
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          id="phone"
+                          type="tel"
+                          inputMode="numeric"
+                          placeholder="123 456 78 90"
+                          value={formatPhoneNumber(phoneNumber)}
+                          onChange={(e) => isEditingProfile && handlePhoneNumberChange(e.target.value)}
+                          onFocus={handlePhoneNumberFocus}
+                          onBlur={handlePhoneNumberBlur}
+                          disabled={!isEditingProfile}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck={false}
+                          data-form-type="other"
+                          data-lpignore="true"
+                          className={cn(
+                            "w-full h-10 pl-10 pr-3 bg-transparent",
+                            "text-sm placeholder:text-muted-foreground",
+                            "focus:outline-none",
+                            "disabled:cursor-not-allowed disabled:opacity-50",
+                            !phoneNumber && isEditingProfile && "text-transparent"
+                          )}
+                          maxLength={14} // "123 456 78 90" = 14 chars
+                        />
+                        {!phoneNumber && isEditingProfile && (
+                          <span className="absolute left-10 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
+                            123 456 78 90
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {isEditingProfile && (
+                    <p className="text-xs text-muted-foreground">Ülke kodunu seçin ve 10 haneli telefon numarası giriniz</p>
+                  )}
                 </div>
               </div>
 
@@ -591,10 +1078,21 @@ export default function Profile() {
                           </p>
                         </div>
                         <div className="flex gap-2">
+                          {!address.is_default && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleSetDefaultAddress(address.id)}
+                              title="Varsayılan yap"
+                            >
+                              <Star className="w-4 h-4 text-muted-foreground" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => handleEditAddress(address)}
+                            title="Düzenle"
                           >
                             <Edit className="w-4 h-4" />
                           </Button>
@@ -603,6 +1101,7 @@ export default function Profile() {
                             size="icon"
                             className="text-destructive hover:text-destructive"
                             onClick={() => handleDeleteAddress(address.id)}
+                            title="Sil"
                           >
                             <Trash2 className="w-4 h-4" />
                           </Button>
@@ -838,13 +1337,24 @@ export default function Profile() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="addressPhone">Telefon</Label>
-                <Input 
-                  id="addressPhone"
-                  type="tel"
-                  value={addressForm.phone}
-                  onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })}
-                />
+                <Label htmlFor="addressPhone">Telefon *</Label>
+                <div className="relative">
+                  <Input 
+                    id="addressPhone"
+                    type="tel"
+                    placeholder="05XXXXXXXXX"
+                    value={addressForm.phone}
+                    onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })}
+                    maxLength={11}
+                    className={!addressForm.phone ? 'text-transparent' : ''}
+                  />
+                  {!addressForm.phone && (
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
+                      05XXXXXXXXX
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">0 ile başlayan 11 haneli telefon numarası giriniz</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="addressLine1">Adres *</Label>

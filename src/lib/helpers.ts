@@ -1,6 +1,7 @@
 import productCard from "@/assets/product-nfc-card.png";
 import productBand from "@/assets/product-nfc-band.png";
 import productPetTag from "@/assets/product-pet-tag.png";
+import { supabase } from "./supabase";
 
 /**
  * Ürün görseli için fallback ile URL döndürür
@@ -44,10 +45,134 @@ export const getProductImage = (
 };
 
 /**
+ * Ürün görselini renge göre getirir
+ * Önce product_images tablosundan renge özel görseli arar, yoksa fallback kullanır
+ * Birden fazla görsel varsa ilk görseli (sort_order'a göre) döndürür
+ */
+export const getProductImageByColor = async (
+  productId: number,
+  color: string,
+  fallbackImageUrl: string | null | undefined,
+  categoryOrName: string
+): Promise<string> => {
+  try {
+    // Önce product_images tablosundan renge özel görselleri ara
+    const { data: productImages, error } = await supabase
+      .from("product_images")
+      .select("image_url")
+      .eq("product_id", productId)
+      .eq("color", color)
+      .order("sort_order", { ascending: true })
+      .limit(1);
+
+    if (!error && productImages && productImages.length > 0 && productImages[0]?.image_url) {
+      return productImages[0].image_url;
+    }
+
+    // Renk bazlı görsel yoksa, fallback görseli kullan
+    return getProductImage(fallbackImageUrl, categoryOrName);
+  } catch (error) {
+    console.error("Renk bazlı görsel getirilemedi:", error);
+    // Hata durumunda fallback görseli döndür
+    return getProductImage(fallbackImageUrl, categoryOrName);
+  }
+};
+
+/**
+ * Ürünün belirli bir rengi için tüm görselleri getirir (sort_order'a göre sıralı)
+ * @returns Görsel URL'lerinin dizisi (sort_order'a göre sıralı)
+ */
+export const getProductImagesByColor = async (
+  productId: number,
+  color: string,
+  fallbackImageUrl: string | null | undefined,
+  categoryOrName: string
+): Promise<string[]> => {
+  try {
+    // product_images tablosundan renge özel tüm görselleri ara
+    const { data: productImages, error } = await supabase
+      .from("product_images")
+      .select("image_url")
+      .eq("product_id", productId)
+      .eq("color", color)
+      .order("sort_order", { ascending: true });
+
+    if (!error && productImages && productImages.length > 0) {
+      // Sadece geçerli image_url'leri filtrele
+      const validImages = productImages
+        .map(img => img.image_url)
+        .filter((url): url is string => !!url);
+      
+      if (validImages.length > 0) {
+        return validImages;
+      }
+    }
+
+    // Renk bazlı görsel yoksa, fallback görseli tek elemanlı dizi olarak döndür
+    return [getProductImage(fallbackImageUrl, categoryOrName)];
+  } catch (error) {
+    console.error("Renk bazlı görseller getirilemedi:", error);
+    return [getProductImage(fallbackImageUrl, categoryOrName)];
+  }
+};
+
+/**
+ * Türkçe karakterleri doğru şekilde büyük harfe çevirir
+ * JavaScript'in toUpperCase() fonksiyonu Türkçe karakterler için doğru çalışmaz
+ * Örnek: "i" → "İ", "ı" → "I"
+ */
+export const toUpperCaseTurkish = (str: string): string => {
+  return str
+    .replace(/i/g, "İ")
+    .replace(/ı/g, "I")
+    .replace(/ş/g, "Ş")
+    .replace(/ğ/g, "Ğ")
+    .replace(/ü/g, "Ü")
+    .replace(/ö/g, "Ö")
+    .replace(/ç/g, "Ç")
+    .toUpperCase();
+};
+
+/**
  * Fiyatı Türk Lirası formatında döndürür
  */
 export const formatPrice = (price: number): string => {
   return `₺${price.toLocaleString("tr-TR")}`;
+};
+
+/**
+ * Tarih string'ini güvenli şekilde Date'e çevirir.
+ * - "YYYY-MM-DD" (DatePicker çıktısı) -> local midnight (timezone kaymasını önler)
+ * - "DD.MM.YYYY" / "DD/MM/YYYY" gibi eski girişleri de destekler
+ * - Geçersizse null döner
+ */
+export const parseDateString = (value: string): Date | null => {
+  if (!value) return null;
+  const v = value.trim();
+
+  // ISO date-only: YYYY-MM-DD
+  let m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const date = new Date(y, mo - 1, d);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  // TR style: DD.MM.YYYY or DD/MM/YYYY
+  m = v.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (m) {
+    const d = Number(m[1]);
+    const mo = Number(m[2]);
+    const y = Number(m[3]);
+    const date = new Date(y, mo - 1, d);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  // Fallback: try native parsing (supports ISO datetime etc.)
+  const date = new Date(v);
+  return Number.isNaN(date.getTime()) ? null : date;
 };
 
 /**
@@ -63,14 +188,18 @@ export const formatDate = (
     day: "numeric",
   };
 
-  return new Date(dateString).toLocaleDateString("tr-TR", options || defaultOptions);
+  const date = parseDateString(dateString);
+  if (!date) return dateString;
+  return date.toLocaleDateString("tr-TR", options || defaultOptions);
 };
 
 /**
  * Tarihi saat ile birlikte Türkçe formatında döndürür
  */
 export const formatDateTime = (dateString: string): string => {
-  return new Date(dateString).toLocaleDateString("tr-TR", {
+  const date = parseDateString(dateString);
+  if (!date) return dateString;
+  return date.toLocaleDateString("tr-TR", {
     year: "numeric",
     month: "long",
     day: "numeric",

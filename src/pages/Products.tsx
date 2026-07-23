@@ -8,11 +8,14 @@ import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
 import { toast } from "sonner";
 import { getProductImage } from "@/lib/helpers";
+import { supabase } from "@/lib/supabase";
 
-// Kişiselleştirme gerektiren kategoriler (tüm NFC ürünleri)
-const CUSTOMIZATION_CATEGORIES = ["Profesyonel", "Premium", "Evcil Hayvan", "Spor & Etkinlik"];
-
-const categories = ["Tümü", "Profesyonel", "Spor & Etkinlik", "Evcil Hayvan"];
+interface Category {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+}
 
 interface Product {
   id: number;
@@ -22,124 +25,148 @@ interface Product {
   category: string;
   image_url: string | null;
   monthly_subscription_fee: number;
+  free_subscription_months: number;
+  nfc_type: string | null;
+  has_subscription?: boolean;
+  // İndirim alanları
+  discount_percentage: number;
+  is_discounted: boolean;
+  discount_start_date: string | null;
+  discount_end_date: string | null;
 }
+
+// İndirim aktif mi kontrol eden yardımcı fonksiyon
+const isDiscountActive = (product: Product): boolean => {
+  if (!product.is_discounted || !product.discount_percentage || product.discount_percentage <= 0) {
+    return false;
+  }
+  const now = new Date();
+  if (product.discount_start_date && new Date(product.discount_start_date) > now) {
+    return false;
+  }
+  if (product.discount_end_date && new Date(product.discount_end_date) < now) {
+    return false;
+  }
+  return true;
+};
+
+// İndirimli fiyatı hesaplayan yardımcı fonksiyon
+const getDiscountedPrice = (product: Product): number => {
+  if (!isDiscountActive(product)) {
+    return product.price;
+  }
+  return Math.round(product.price * (1 - product.discount_percentage / 100));
+};
 
 export default function Products() {
   const navigate = useNavigate();
   const [selectedCategory, setSelectedCategory] = useState("Tümü");
   const [searchQuery, setSearchQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { addToCart } = useCart();
 
-  // Ürünün kişiselleştirme gerektirip gerektirmediğini kontrol et
-  const requiresCustomization = (category: string): boolean => {
-    return CUSTOMIZATION_CATEGORIES.some(c => 
-      category.toLowerCase().includes(c.toLowerCase())
-    );
-  };
+  const requiresCustomization = (p: Product): boolean =>
+    (p.nfc_type === "business-card" || p.nfc_type === "pet-id" || p.nfc_type === "redirect");
 
-  // Sepete ekle veya detay sayfasına yönlendir
+  const hasSub = (p: Product): boolean =>
+    p.has_subscription !== false && p.nfc_type !== "nfc-yok";
+
   const handleAddToCart = (product: Product) => {
-    if (requiresCustomization(product.category)) {
-      // Kişiselleştirme gerektiren ürünler için detay sayfasına yönlendir
+    if (requiresCustomization(product)) {
       navigate(`/product/${product.id}`);
       toast.info("Bu ürün için bilgilerinizi girmeniz gerekiyor");
     } else {
-      // Diğer ürünler için doğrudan sepete ekle
-      const totalPrice = product.price + (product.monthly_subscription_fee || 29);
+      // İndirimli fiyatı kullan
+      const finalPrice = getDiscountedPrice(product);
+      const customization: Record<string, unknown> = {};
+      if (hasSub(product)) {
+        customization.subscriptionFee = product.monthly_subscription_fee || 29;
+        // 0 geçerli bir değerdir (bedava ay yok); bu yüzden || yerine ?? kullan
+        customization.freeSubscriptionMonths = product.free_subscription_months ?? 1;
+      }
+      // İndirim bilgisini de ekle
+      if (isDiscountActive(product)) {
+        customization.originalPrice = product.price;
+        customization.discountPercentage = product.discount_percentage;
+      }
       addToCart({
         id: product.id,
         productId: product.id,
         name: product.name,
-        price: totalPrice, // Ürün + ilk ay abonelik
+        price: finalPrice,
         image: getProductImage(product.image_url, product.category),
-        customization: {
-          subscriptionFee: product.monthly_subscription_fee || 29
-        }
+        customization,
       });
     }
   };
 
-  // Fetch products from Supabase - Native fetch API kullanarak (Chrome uyumluluğu için)
+  // Fetch products and categories from Supabase
   useEffect(() => {
     let isMounted = true;
-    const controller = new AbortController();
 
-    const fetchProducts = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        // Kategorileri getir
+        const { data: categoriesData, error: categoriesError } = await supabase
+          .from("categories")
+          .select("*")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true });
 
-        if (!supabaseUrl || !supabaseKey) {
-          throw new Error('Supabase yapılandırması eksik');
+        if (categoriesError) {
+          console.error("Kategoriler yüklenemedi:", categoriesError);
+        } else if (categoriesData && isMounted) {
+          setCategories(categoriesData);
         }
 
-        console.log('Fetching products with native fetch...');
-        
-        // Native fetch API kullan - Supabase client yerine
-        const response = await fetch(
-          `${supabaseUrl}/rest/v1/products?select=id,name,description,price,category,image_url,monthly_subscription_fee&is_active=eq.true&order=id.asc`,
-          {
-            method: 'GET',
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
-            },
-            signal: controller.signal
-          }
-        );
+        // Ürünleri getir
+        const { data: productsData, error: productsError } = await supabase
+          .from("products")
+          .select("id, name, description, price, category, image_url, monthly_subscription_fee, free_subscription_months, nfc_type, has_subscription, discount_percentage, is_discounted, discount_start_date, discount_end_date")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true });
 
-        // Component unmount olduysa state güncelleme yapma
         if (!isMounted) {
           console.log('Component unmounted, skipping state update');
           return;
         }
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('Fetch error:', response.status, errorText);
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        if (productsError) {
+          throw productsError;
         }
 
-        const data = await response.json();
-        console.log('Fetch response:', data);
-
-        if (!data || data.length === 0) {
+        if (!productsData || productsData.length === 0) {
           setError('Veritabanında ürün bulunamadı. SQL dosyalarını çalıştırdığınızdan emin olun.');
           toast.warning('Veritabanında ürün yok');
           setLoading(false);
           return;
         }
 
-        setProducts(data);
-        setLoading(false);
-        console.log(`${data.length} ürün yüklendi`);
+        setProducts(productsData);
+        console.log(`${productsData.length} ürün yüklendi`);
       } catch (err: any) {
         if (!isMounted) return;
-        if (err.name === 'AbortError') {
-          console.log('Fetch aborted');
-          return;
-        }
-        console.error('Error fetching products:', err);
+        console.error('Error fetching data:', err);
         setError(`Bağlantı hatası: ${err.message}`);
-        toast.error('Ürünler yüklenemedi');
-        setLoading(false);
+        toast.error('Veriler yüklenemedi');
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
-    fetchProducts();
+    fetchData();
 
-    // Cleanup function - component unmount olduğunda çalışır
+    // Cleanup function
     return () => {
       isMounted = false;
-      controller.abort();
     };
   }, []);
 
@@ -207,7 +234,7 @@ export default function Products() {
               <span className="text-gradient">NFC Ürünleri</span>
             </h1>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              İhtiyacınıza uygun NFC çözümünü bulun. Tüm ürünler ilk ay ücretsiz abonelik ile gelir.
+              İhtiyacınıza uygun NFC çözümünü bulun. NFC ürünleri belirtilen süre kadar bedava abonelik ile gelir.
             </p>
           </motion.div>
 
@@ -231,14 +258,21 @@ export default function Products() {
 
             {/* Category Filter */}
             <div className="flex gap-2 flex-wrap">
+              <Button
+                variant={selectedCategory === "Tümü" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedCategory("Tümü")}
+              >
+                Tümü
+              </Button>
               {categories.map(category => (
                 <Button
-                  key={category}
-                  variant={selectedCategory === category ? "default" : "outline"}
+                  key={category.id}
+                  variant={selectedCategory === category.name ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setSelectedCategory(category)}
+                  onClick={() => setSelectedCategory(category.name)}
                 >
-                  {category}
+                  {category.name}
                 </Button>
               ))}
             </div>
@@ -254,7 +288,7 @@ export default function Products() {
                 transition={{ delay: index * 0.05 }}
                 className="group bg-card rounded-2xl overflow-hidden shadow-card hover:shadow-xl transition-all duration-300 border border-border/50"
               >
-                <Link to={`/product/${product.id}`} className="block">
+                <Link to={`/product/${product.id}`} className="block relative">
                   <div className="aspect-square p-8 bg-muted/30 flex items-center justify-center overflow-hidden">
                     <img 
                       src={getProductImage(product.image_url, product.category)} 
@@ -262,6 +296,14 @@ export default function Products() {
                       className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
                     />
                   </div>
+                  {/* İndirim Badge */}
+                  {isDiscountActive(product) && (
+                    <div className="absolute top-3 left-3">
+                      <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-lg shadow-lg">
+                        %{product.discount_percentage} İNDİRİM
+                      </span>
+                    </div>
+                  )}
                 </Link>
                 <div className="p-6">
                   <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
@@ -273,18 +315,39 @@ export default function Products() {
                   <p className="text-sm text-muted-foreground mb-4">{product.description}</p>
                   <div className="flex items-center justify-between">
                     <div>
-                      <span className="text-2xl font-bold text-gradient">
-                        ₺{(product.price + (product.monthly_subscription_fee || 29)).toFixed(0)}
-                      </span>
-                      <p className="text-xs text-muted-foreground">
-                        ₺{product.price} ürün + ₺{product.monthly_subscription_fee || 29} (ilk ay abonelik)
-                      </p>
+                      {/* Fiyat Gösterimi - İndirimli veya Normal */}
+                      {isDiscountActive(product) ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg text-muted-foreground line-through">
+                            ₺{product.price.toFixed(0)}
+                          </span>
+                          <span className="text-2xl font-bold text-red-500">
+                            ₺{getDiscountedPrice(product)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-2xl font-bold text-gradient">
+                          ₺{product.price.toFixed(0)}
+                        </span>
+                      )}
+                      {hasSub(product) ? (
+                        <div className="space-y-0.5">
+                          <p className="text-xs text-green-600 font-medium">
+                            +{product.free_subscription_months || 1} ay bedava abonelik
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {product.free_subscription_months || 1} ay sonra ₺{product.monthly_subscription_fee || 29}/ay
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Tek seferlik ödeme</p>
+                      )}
                     </div>
                     <Button 
                       size="sm"
                       onClick={() => handleAddToCart(product)}
                     >
-                      {requiresCustomization(product.category) ? (
+                      {requiresCustomization(product) ? (
                         <>
                           <ArrowRight className="w-4 h-4 mr-1" />
                           Bilgileri Gir

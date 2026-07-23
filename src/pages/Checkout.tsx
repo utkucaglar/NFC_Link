@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useNavigate, Link } from "react-router-dom";
 import { 
@@ -12,10 +12,9 @@ import {
   User,
   Building,
   Check,
+  CheckCircle2,
   Loader2,
-  Tag,
-  X,
-  CheckCircle2
+  X
 } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -23,8 +22,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { supabase, ShippingAddress } from "@/lib/supabase";
+import { sendOrderStatusSms } from "@/lib/sms";
+import { sendOrderStatusEmail, sendNewOrderNotificationToAdmins } from "@/lib/email";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { toUpperCaseTurkish } from "@/lib/helpers";
+import { createPayTRToken, encodeBasket, loadPayTRIframe, checkPaymentStatus } from "@/lib/paytr";
+
+const addMonths = (date: Date, months: number): Date => {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d;
+};
 
 // Türkiye illeri
 const cities = [
@@ -62,12 +72,26 @@ const generateUniqueKey = (): string => {
   return key;
 };
 
+// Kargo ayarları interface
+interface ShippingSettings {
+  free_shipping_threshold: number;
+  shipping_cost: number;
+  is_enabled: boolean;
+}
+
+const defaultShippingSettings: ShippingSettings = {
+  free_shipping_threshold: 500,
+  shipping_cost: 50,
+  is_enabled: true,
+};
+
 export default function Checkout() {
   const navigate = useNavigate();
   const { cartItems, cartTotal, clearCart } = useCart();
   const { user, profile, isAuthenticated } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [shippingSettings, setShippingSettings] = useState<ShippingSettings>(defaultShippingSettings);
   const [formData, setFormData] = useState<ShippingFormData>({
     firstName: "",
     lastName: "",
@@ -81,17 +105,121 @@ export default function Checkout() {
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
 
-  // Discount state
-  const [discountCode, setDiscountCode] = useState("");
-  const [discountLoading, setDiscountLoading] = useState(false);
-  const [appliedDiscount, setAppliedDiscount] = useState<{
-    id: string;
-    code: string;
-    discount_type: "percentage" | "fixed";
-    discount_value: number;
-    discountAmount: number;
-  } | null>(null);
-  const [discountError, setDiscountError] = useState("");
+  // Saved addresses
+  const [savedAddresses, setSavedAddresses] = useState<ShippingAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [useSavedAddress, setUseSavedAddress] = useState(false);
+  const [loadingAddresses, setLoadingAddresses] = useState(false);
+
+  // PayTR state
+  const [showPayTRIframe, setShowPayTRIframe] = useState(false);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+
+  // Terms acceptance
+  const [termsAccepted, setTermsAccepted] = useState(false);
+
+  // Checkout completed flag - to prevent redirect to cart after clearing
+  const [checkoutCompleted, setCheckoutCompleted] = useState(false);
+
+  // Refs for cleanup - ödeme işlemi yarıda kesilirse siparişi iptal etmek için
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingOrderIdRef = useRef<string | null>(null);
+  const paymentCompletedRef = useRef<boolean>(false);
+
+  // Ödeme yarıda kesilirse siparişi iptal eden fonksiyon
+  const cancelPendingOrder = useCallback(async (orderIdToCancel: string) => {
+    try {
+      await supabase
+        .from("orders")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("id", orderIdToCancel)
+        .eq("status", "pending"); // Sadece pending ise iptal et
+      console.log("Pending sipariş iptal edildi:", orderIdToCancel);
+    } catch (error) {
+      console.warn("Sipariş iptal edilemedi:", error);
+    }
+  }, []);
+
+  // Cleanup: Component unmount olduğunda veya sayfa kapatıldığında pending siparişi iptal et
+  useEffect(() => {
+    // beforeunload: Kullanıcı sayfayı kapatmaya/yenilemeye çalıştığında
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Eğer ödeme süreci başladı ve tamamlanmadıysa uyar
+      if (pendingOrderIdRef.current && !paymentCompletedRef.current) {
+        e.preventDefault();
+        e.returnValue = "Ödeme işlemi devam ediyor. Sayfadan ayrılmak siparişinizi iptal edecektir.";
+        return e.returnValue;
+      }
+    };
+
+    // visibilitychange: Sayfa gizlendiğinde (tab değişikliği, minimize vb.)
+    const handleVisibilityChange = () => {
+      // Sayfa gizlendi ve ödeme tamamlanmadıysa - iptal etme, sadece log
+      // (Kullanıcı sekme değiştirip geri dönebilir)
+      if (document.visibilityState === "hidden" && pendingOrderIdRef.current && !paymentCompletedRef.current) {
+        console.log("Ödeme sayfası arka plana alındı, sipariş beklemede:", pendingOrderIdRef.current);
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Component unmount olduğunda
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+
+      // Polling interval'ı temizle
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+
+      // Ödeme tamamlanmadıysa pending siparişi iptal et
+      if (pendingOrderIdRef.current && !paymentCompletedRef.current) {
+        cancelPendingOrder(pendingOrderIdRef.current);
+      }
+    };
+  }, [cancelPendingOrder]);
+
+  // Load saved addresses
+  useEffect(() => {
+    if (user) {
+      fetchSavedAddresses();
+    }
+  }, [user]);
+
+  // Kargo ayarlarını yükle
+  useEffect(() => {
+    const fetchShippingSettings = async () => {
+      try {
+        const { data } = await supabase
+          .from("site_settings")
+          .select("value")
+          .eq("key", "shipping_settings")
+          .single();
+
+        if (data) {
+          setShippingSettings(JSON.parse(data.value));
+        }
+      } catch (err) {
+        console.error("Kargo ayarları yüklenemedi:", err);
+      }
+    };
+
+    fetchShippingSettings();
+  }, []);
+
+  // Kargo ücretini hesapla
+  const calculateShipping = (): number => {
+    if (!shippingSettings.is_enabled) return 0;
+    if (cartTotal >= shippingSettings.free_shipping_threshold) return 0;
+    return shippingSettings.shipping_cost;
+  };
+
+  const shippingCost = calculateShipping();
+  const isFreeShipping = shippingCost === 0;
 
   // Pre-fill form with user profile data
   useEffect(() => {
@@ -105,49 +233,94 @@ export default function Checkout() {
     }
   }, [profile]);
 
-  // Load discount from localStorage (if applied in Cart)
+  // Load default address if available
   useEffect(() => {
-    const savedDiscount = localStorage.getItem("appliedDiscount");
-    if (savedDiscount) {
-      try {
-        const discount = JSON.parse(savedDiscount);
-        // Recalculate discount amount based on current cart total
-        let calculatedDiscount = 0;
-        if (discount.discount_type === "percentage") {
-          calculatedDiscount = (cartTotal * discount.discount_value) / 100;
-          if (discount.max_discount_amount && calculatedDiscount > discount.max_discount_amount) {
-            calculatedDiscount = discount.max_discount_amount;
-          }
-        } else {
-          calculatedDiscount = discount.discount_value;
-        }
-        calculatedDiscount = Math.min(calculatedDiscount, cartTotal);
-        
-        setAppliedDiscount({
-          ...discount,
-          discountAmount: calculatedDiscount,
-        });
-        setDiscountCode(discount.code);
-      } catch (e) {
-        localStorage.removeItem("appliedDiscount");
+    if (savedAddresses.length > 0 && !selectedAddressId) {
+      const defaultAddress = savedAddresses.find(addr => addr.is_default);
+      if (defaultAddress) {
+        setSelectedAddressId(defaultAddress.id);
+        setUseSavedAddress(true);
+        loadAddressToForm(defaultAddress);
       }
     }
-  }, [cartTotal]);
+  }, [savedAddresses]);
 
-  // Redirect if cart is empty
+  const fetchSavedAddresses = async () => {
+    if (!user) return;
+    
+    setLoadingAddresses(true);
+    try {
+      const { data, error } = await supabase
+        .from('shipping_addresses')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true) // Sadece aktif adresleri getir
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setSavedAddresses(data || []);
+    } catch (error) {
+      console.error('Error fetching addresses:', error);
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+
+  const loadAddressToForm = (address: ShippingAddress) => {
+    setFormData({
+      firstName: address.first_name,
+      lastName: address.last_name,
+      phone: address.phone,
+      addressLine1: address.address_line1,
+      addressLine2: address.address_line2 || "",
+      city: address.city,
+      district: address.district || "",
+      postalCode: address.postal_code,
+      notes: address.notes || ""
+    });
+  };
+
+  const handleSelectAddress = (address: ShippingAddress) => {
+    setSelectedAddressId(address.id);
+    setUseSavedAddress(true);
+    loadAddressToForm(address);
+  };
+
+  const handleUseNewAddress = () => {
+    setUseSavedAddress(false);
+    setSelectedAddressId(null);
+    // Reset form to profile data
+    if (profile) {
+      setFormData({
+        firstName: profile.first_name || "",
+        lastName: profile.last_name || "",
+        phone: profile.phone || "",
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        district: "",
+        postalCode: "",
+        notes: ""
+      });
+    }
+  };
+
+  // Redirect if cart is empty (but not after successful checkout)
   useEffect(() => {
-    if (cartItems.length === 0) {
+    if (cartItems.length === 0 && !checkoutCompleted) {
       navigate("/cart");
     }
-  }, [cartItems, navigate]);
+  }, [cartItems, navigate, checkoutCompleted]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
-    if (!isAuthenticated()) {
+    // Yalnızca auth durumu kontrol edildiğinde yönlendir
+    if (user === null && !loading) {
       toast.error("Ödeme yapmak için giriş yapmalısınız");
-      navigate("/login");
+      navigate("/login?redirect=/checkout");
     }
-  }, [isAuthenticated, navigate]);
+  }, [user, loading, navigate]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -157,12 +330,26 @@ export default function Checkout() {
 
   const validateShippingForm = () => {
     const newErrors: {[key: string]: string} = {};
+
+    // Kayıtlı adres kullanılsa bile telefon kontrolü yap
+    if (!formData.phone || !formData.phone.trim()) {
+      newErrors.phone = "Telefon numarası gereklidir";
+    }
+
+    // If using saved address, only check phone
+    if (useSavedAddress && selectedAddressId) {
+      setErrors(newErrors);
+      return Object.keys(newErrors).length === 0;
+    }
     
     if (!formData.firstName.trim()) newErrors.firstName = "İsim gereklidir";
     if (!formData.lastName.trim()) newErrors.lastName = "Soyisim gereklidir";
     if (!formData.phone.trim()) newErrors.phone = "Telefon numarası gereklidir";
-    else if (!/^[0-9]{10,11}$/.test(formData.phone.replace(/\s/g, ''))) {
-      newErrors.phone = "Geçerli bir telefon numarası girin (10-11 haneli)";
+    else {
+      const phoneNumber = formData.phone.replace(/\s/g, '');
+      if (!/^0[0-9]{10}$/.test(phoneNumber)) {
+        newErrors.phone = "Telefon numarası 0 ile başlamalı ve 11 haneli olmalıdır (örn: 05XXXXXXXXX)";
+      }
     }
     if (!formData.addressLine1.trim()) newErrors.addressLine1 = "Adres gereklidir";
     if (!formData.city) newErrors.city = "İl seçiniz";
@@ -183,19 +370,67 @@ export default function Checkout() {
   };
 
   const handlePayment = async () => {
+    // Sözleşme onayı kontrolü
+    if (!termsAccepted) {
+      toast.error("Ödeme yapmak için sözleşmeleri onaylamanız gerekmektedir.");
+      return;
+    }
+
     setLoading(true);
     
     try {
-      // TODO: Burada Stripe integration yapılacak
-      // 1. Backend'de payment intent oluştur
-      // 2. Stripe Checkout'a yönlendir veya Stripe Elements kullan
-      // 3. Ödeme başarılı olursa sipariş oluştur
+      // Profil bilgileri kontrolü - isim, soyisim ve telefon numarası
+      if (!profile) {
+        toast.error("Profil bilgileriniz yüklenemedi. Lütfen tekrar deneyin.");
+        setLoading(false);
+        return;
+      }
+
+      const missingFields: string[] = [];
       
-      // Şimdilik mock ödeme işlemi
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      if (!profile.first_name || !profile.first_name.trim()) {
+        missingFields.push("isim");
+      }
       
-      // Sipariş numarası oluştur
-      const orderNumber = `NFC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+      if (!profile.last_name || !profile.last_name.trim()) {
+        missingFields.push("soyisim");
+      }
+      
+      if (!profile.phone || !profile.phone.trim()) {
+        missingFields.push("telefon numarası");
+      }
+
+      if (missingFields.length > 0) {
+        const missingText = missingFields
+          .map(field => {
+            if (field === "isim") return "İsim";
+            if (field === "soyisim") return "Soyisim";
+            if (field === "telefon numarası") return "Telefon Numarası";
+            return field;
+          })
+          .join(", ");
+        toast.error(`Ödeme yapmak için profil bilgilerinizi tamamlamanız gerekiyor. Eksik: ${missingText}`);
+        setLoading(false);
+        // Profil sayfasına yönlendir, eksik alanları belirt
+        navigate(`/profile?missing=${missingFields.join(",")}`);
+        return;
+      }
+
+      // Telefon kontrolü - PayTR için zorunlu (formData'dan da kontrol et)
+      if (!formData.phone || !formData.phone.trim()) {
+        toast.error("Telefon numarası gereklidir");
+        setLoading(false);
+        setCurrentStep(1); // Adres adımına geri dön
+        return;
+      }
+
+      // Calculate totals (indirimler artık ürün bazlı, sepette uygulanmış durumda)
+      const subtotal = cartTotal;
+      const shipping = shippingCost; // Kargo ücreti (ayarlara göre)
+      const total = subtotal + shipping;
+      
+      // Sipariş numarası oluştur (PayTR sadece alfanumerik kabul eder, tire yok)
+      const orderNumber = `NFC${new Date().getFullYear()}${Date.now().toString().slice(-8)}`;
       
       // Teslimat adresi oluştur
       const shippingAddress = `${formData.firstName} ${formData.lastName}
@@ -204,6 +439,38 @@ ${formData.addressLine1}
 ${formData.addressLine2 ? formData.addressLine2 + '\n' : ''}${formData.district ? formData.district + ', ' : ''}${formData.city} ${formData.postalCode}
 ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
 
+      // Save address to shipping_addresses if not using saved address
+      let savedAddressId: string | null = null;
+      if (!useSavedAddress || !selectedAddressId) {
+        // Save the address used in order
+        const { data: newAddress, error: addressError } = await supabase
+          .from("shipping_addresses")
+          .insert({
+            user_id: user?.id,
+            title: "Sipariş Adresi",
+            first_name: formData.firstName,
+            last_name: formData.lastName,
+            phone: formData.phone,
+            address_line1: formData.addressLine1,
+            address_line2: formData.addressLine2 || null,
+            city: formData.city,
+            district: formData.district || null,
+            postal_code: formData.postalCode,
+            country: "Türkiye",
+            notes: formData.notes || null,
+            is_default: savedAddresses.length === 0, // İlk adres ise default
+            is_active: true, // Yeni eklenen adresler aktif olmalı
+          })
+          .select()
+          .single();
+
+        if (!addressError && newAddress) {
+          savedAddressId = newAddress.id;
+        }
+      } else {
+        savedAddressId = selectedAddressId;
+      }
+
       // Siparişi veritabanına kaydet
       const { data: orderData, error: orderError } = await supabase
         .from("orders")
@@ -211,34 +478,155 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
           user_id: user?.id,
           order_number: orderNumber,
           status: "pending",
-          subtotal,
-          discount_id: appliedDiscount?.id || null,
-          discount_amount: discountAmount,
-          total,
+          total: total,
           shipping_address: shippingAddress,
+          shipping_address_id: savedAddressId,
+          phone: formData.phone,
+          notes: formData.notes || null,
         })
         .select()
         .single();
 
       if (orderError) throw orderError;
+      
+      setOrderId(orderData.id);
+      pendingOrderIdRef.current = orderData.id; // Cleanup için ref'e kaydet
+      paymentCompletedRef.current = false; // Ödeme henüz tamamlanmadı
 
-      // İndirim kullanımını kaydet
-      if (appliedDiscount && user) {
-        // discount_usages tablosuna kaydet
-        await supabase.from("discount_usages").insert({
-          discount_id: appliedDiscount.id,
-          user_id: user.id,
-          order_id: orderData.id,
-          discount_amount: discountAmount,
-        });
+      // PayTR için sepet bilgilerini hazırla
+      const basketItems = cartItems.map(item => ({
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      }));
+      const userBasket = encodeBasket(basketItems);
 
-        // usage_count'u artır
-        await supabase.rpc("increment_discount_usage", { discount_id: appliedDiscount.id });
+      // Kullanıcı bilgilerini hazırla
+      const userName = `${formData.firstName} ${formData.lastName}`;
+      const userEmail = user?.email || "";
+      // PayTR için profil telefon numarasını kullan
+      const userPhone = profile?.phone?.trim() || formData.phone;
+      if (!userPhone) {
+        throw new Error("Telefon numarası bulunamadı. Lütfen profil bilgilerinizi güncelleyin.");
       }
+      const userAddress = `${formData.addressLine1}${formData.addressLine2 ? `, ${formData.addressLine2}` : ''}, ${formData.district ? `${formData.district}, ` : ''}${formData.city} ${formData.postalCode}`;
+
+      // PayTR token oluştur
+      const tokenResult = await createPayTRToken({
+        order_id: orderData.id, // Order UUID
+        order_number: orderNumber, // Order number for PayTR
+        amount: Math.round(total * 100), // PayTR kuruş cinsinden ister
+        user_name: userName,
+        user_email: userEmail,
+        user_phone: userPhone,
+        user_address: userAddress,
+        user_basket: userBasket,
+        currency: "TL",
+      });
+
+      if (!tokenResult.success || !tokenResult.token) {
+        throw new Error(tokenResult.error || "PayTR token oluşturulamadı");
+      }
+
+      if (!tokenResult.payment_id) {
+        throw new Error("Payment ID alınamadı");
+      }
+
+      const currentPaymentId = tokenResult.payment_id;
+      setPaymentId(currentPaymentId);
+
+      // PayTR iframe'i göster
+      setShowPayTRIframe(true);
+      setLoading(false);
+
+      // DOM güncellemesini bekle, sonra iframe'i yükle
+      // Mobil cihazlarda React render daha yavaş olabilir
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      try {
+        await loadPayTRIframe(tokenResult.token);
+      } catch (iframeError: any) {
+        console.error("Iframe yükleme hatası:", iframeError);
+        toast.error("Ödeme sayfası yüklenemedi. Lütfen sayfayı yenileyip tekrar deneyin.");
+        // Iframe yüklenemese bile kullanıcı bekleyebilir, polling devam etsin
+      }
+
+      // Ödeme durumunu kontrol et (polling)
+      // paymentId state'ine güvenmek yerine doğrudan tokenResult.payment_id kullan
+      const checkInterval = setInterval(async () => {
+        try {
+          const status = await checkPaymentStatus(currentPaymentId);
+          if (status.status === "succeeded") {
+            clearInterval(checkInterval);
+            pollingIntervalRef.current = null;
+            paymentCompletedRef.current = true; // Ödeme başarılı
+            pendingOrderIdRef.current = null; // Artık iptal edilmesine gerek yok
+            await handlePaymentSuccess(orderData.id, orderNumber, total);
+          } else if (status.status === "failed") {
+            clearInterval(checkInterval);
+            pollingIntervalRef.current = null;
+            toast.error("Ödeme başarısız oldu");
+            // Callback gecikirse/kullanıcı kapatırsa pending kalmasın
+            try {
+              await supabase
+                .from("orders")
+                .update({ status: "cancelled", updated_at: new Date().toISOString() })
+                .eq("id", orderData.id);
+              pendingOrderIdRef.current = null; // Sipariş zaten iptal edildi
+            } catch (e) {
+              console.warn("Order cancel update failed:", e);
+            }
+            setShowPayTRIframe(false);
+          }
+        } catch (error) {
+          console.error("Payment status check error:", error);
+        }
+      }, 2000); // Her 2 saniyede bir kontrol et
+
+      // Ref'e kaydet (cleanup için)
+      pollingIntervalRef.current = checkInterval;
+
+      // 5 dakika sonra polling'i durdur
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        if (pollingIntervalRef.current === checkInterval) {
+          pollingIntervalRef.current = null;
+        }
+      }, 5 * 60 * 1000);
+
+    } catch (error: any) {
+      console.error('Payment error:', error);
+      const errorMessage = error.message || "Ödeme başlatılırken bir hata oluştu";
+      
+      // Oturum süresi dolmuşsa kullanıcıyı login sayfasına yönlendir
+      if (errorMessage.includes("Oturum süresi dolmuş") || 
+          errorMessage.includes("Oturum bulunamadı") ||
+          errorMessage.includes("Unauthorized") ||
+          errorMessage.includes("401")) {
+        toast.error("Oturum süresi dolmuş. Lütfen tekrar giriş yapın.");
+        
+        // Session'ı temizle
+        await supabase.auth.signOut();
+        
+        // Login sayfasına yönlendir (return URL ile)
+        setTimeout(() => {
+          navigate("/login?redirect=/checkout");
+        }, 1500);
+        return;
+      }
+      
+      toast.error(errorMessage);
+      setLoading(false);
+    }
+  };
+
+  const handlePaymentSuccess = async (orderId: string, orderNumber: string, total: number) => {
+    try {
+      setLoading(true);
 
       // Sipariş kalemlerini kaydet
       const orderItems = cartItems.map(item => ({
-        order_id: orderData.id,
+        order_id: orderId,
         product_id: item.productId || item.id,
         quantity: item.quantity,
         price: item.price,
@@ -296,7 +684,6 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                 partnerName1: customization.partnerName1,
                 partnerName2: customization.partnerName2,
                 relationshipStartDate: customization.relationshipStartDate,
-                backgroundImage: customization.backgroundImage,
                 subtitle: customization.subtitle,
                 theme: customization.theme,
               } : {}),
@@ -312,6 +699,10 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
               nfcName = `Sevgililer - ${customization.partnerName1} & ${customization.partnerName2}`;
             }
 
+            // Abonelik var mı? (aboneliği olmayan ürünlerde freeSubscriptionMonths gönderilmez)
+            const hasSubscription = customization.freeSubscriptionMonths !== undefined && customization.freeSubscriptionMonths !== null;
+            const freeMonths = Math.max(0, Number(customization.freeSubscriptionMonths ?? 0));
+
             nfcRecords.push({
               user_id: user?.id,
               name: nfcName,
@@ -320,8 +711,12 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
               is_active: true,
               data: nfcData,
               theme: customization.theme || "default",
-              subscription_status: "active",
-              subscription_end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 gün sonra
+              subscription_status: hasSubscription ? "active" : "inactive",
+              // Abonelik yoksa NULL; varsa admin panelindeki "Bedava Abonelik (Ay)" kadar başlat
+              subscription_end_date: hasSubscription
+                ? addMonths(new Date(), freeMonths).toISOString()
+                : null,
+              product_id: item.productId || item.id, // Ürün ID'si - abonelik yenileme için gerekli
             });
           }
         }
@@ -339,132 +734,82 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
         }
       }
       
-      toast.success(`Siparişiniz alındı! Sipariş No: ${orderNumber}`);
+      toast.success(`Ödeme başarılı! Sipariş No: ${orderNumber}`);
+      
+      // SMS bildirimi gönder (arka planda)
+      if (formData.phone) {
+        sendOrderStatusSms(formData.phone, orderNumber, "confirmed").catch(console.error);
+      }
+
+      // Email bildirimi gönder (arka planda)
+      if (user?.email) {
+        const orderItemsForEmail = cartItems.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+        }));
+        // Müşteriye sipariş onay emaili
+        sendOrderStatusEmail(user.email, orderNumber, "confirmed", orderItemsForEmail, total).catch(console.error);
+        
+        // Admin'lere yeni sipariş bildirimi
+        const customerName = profile?.first_name && profile?.last_name 
+          ? `${profile.first_name} ${profile.last_name}`
+          : user.email;
+        sendNewOrderNotificationToAdmins(
+          orderNumber,
+          customerName,
+          user.email,
+          total,
+          orderItemsForEmail
+        ).catch(console.error);
+      }
+      
+      // Önce checkout tamamlandı flag'ini set et, sonra sepeti temizle
+      // Bu sayede boş sepet kontrolü /cart'a yönlendirmez
+      setCheckoutCompleted(true);
       clearCart();
-      localStorage.removeItem("appliedDiscount");
+      setShowPayTRIframe(false);
       navigate("/orders");
       
     } catch (error: any) {
-      console.error('Payment error:', error);
-      toast.error(error.message || "Sipariş oluşturulurken bir hata oluştu");
+      console.error('Payment success handler error:', error);
+      toast.error(error.message || "Sipariş işlenirken bir hata oluştu");
     } finally {
       setLoading(false);
     }
   };
 
+  // Calculate totals for display (indirimler artık ürün bazlı, sepette uygulanmış durumda)
   const subtotal = cartTotal;
-  const shipping = 0; // Ücretsiz kargo
-  const discountAmount = appliedDiscount?.discountAmount || 0;
-  const total = Math.max(0, subtotal + shipping - discountAmount);
+  const shipping = shippingCost; // Kargo ücreti (ayarlara göre)
+  const total = subtotal + shipping;
 
-  // İndirim kodu uygula
-  const handleApplyDiscount = async () => {
-    if (!discountCode.trim()) {
-      setDiscountError("İndirim kodu giriniz");
-      return;
-    }
+  // Kullanıcı yükleniyor veya oturum açılmamışsa
+  if (!user && !checkoutCompleted) {
+    return (
+      <Layout>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+            <p className="text-muted-foreground">Yükleniyor...</p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
-    setDiscountLoading(true);
-    setDiscountError("");
-
-    try {
-      // İndirim kodunu kontrol et
-      const { data: discount, error } = await supabase
-        .from("discounts")
-        .select("*")
-        .eq("code", discountCode.trim().toUpperCase())
-        .eq("is_active", true)
-        .single();
-
-      if (error || !discount) {
-        setDiscountError("Geçersiz indirim kodu");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Tarih kontrolü
-      const now = new Date();
-      if (discount.starts_at && new Date(discount.starts_at) > now) {
-        setDiscountError("Bu indirim kodu henüz aktif değil");
-        setDiscountLoading(false);
-        return;
-      }
-      if (discount.expires_at && new Date(discount.expires_at) < now) {
-        setDiscountError("Bu indirim kodunun süresi dolmuş");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Kullanım limiti kontrolü
-      if (discount.usage_limit && discount.usage_count >= discount.usage_limit) {
-        setDiscountError("Bu indirim kodu kullanım limitine ulaşmış");
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Minimum tutar kontrolü
-      if (discount.min_order_amount && subtotal < discount.min_order_amount) {
-        setDiscountError(`Minimum sipariş tutarı: ₺${discount.min_order_amount}`);
-        setDiscountLoading(false);
-        return;
-      }
-
-      // Kullanıcı başına kullanım kontrolü
-      if (user && discount.per_user_limit) {
-        const { count } = await supabase
-          .from("discount_usages")
-          .select("*", { count: "exact", head: true })
-          .eq("discount_id", discount.id)
-          .eq("user_id", user.id);
-
-        if (count && count >= discount.per_user_limit) {
-          setDiscountError("Bu indirim kodunu daha önce kullandınız");
-          setDiscountLoading(false);
-          return;
-        }
-      }
-
-      // İndirim miktarını hesapla
-      let calculatedDiscount = 0;
-      if (discount.discount_type === "percentage") {
-        calculatedDiscount = (subtotal * discount.discount_value) / 100;
-        // Max indirim limiti kontrolü
-        if (discount.max_discount_amount && calculatedDiscount > discount.max_discount_amount) {
-          calculatedDiscount = discount.max_discount_amount;
-        }
-      } else {
-        calculatedDiscount = discount.discount_value;
-      }
-
-      // İndirim tutarı sipariş tutarını geçemez
-      calculatedDiscount = Math.min(calculatedDiscount, subtotal);
-
-      setAppliedDiscount({
-        id: discount.id,
-        code: discount.code,
-        discount_type: discount.discount_type,
-        discount_value: discount.discount_value,
-        discountAmount: calculatedDiscount,
-      });
-
-      toast.success(`İndirim kodu uygulandı: ₺${calculatedDiscount.toFixed(2)} indirim`);
-    } catch (err) {
-      console.error("İndirim kodu hatası:", err);
-      setDiscountError("İndirim kodu uygulanamadı");
-    } finally {
-      setDiscountLoading(false);
-    }
-  };
-
-  // İndirim kodunu kaldır
-  const handleRemoveDiscount = () => {
-    setAppliedDiscount(null);
-    setDiscountCode("");
-    setDiscountError("");
-  };
-
-  if (cartItems.length === 0) {
-    return null;
+  // Sepet boşsa ve ödeme tamamlanmamışsa
+  if (cartItems.length === 0 && !checkoutCompleted) {
+    return (
+      <Layout>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+            <p className="text-muted-foreground">Sepete yönlendiriliyorsunuz...</p>
+          </div>
+        </div>
+      </Layout>
+    );
   }
 
   return (
@@ -523,7 +868,69 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     Teslimat Adresi
                   </h2>
 
-                  <div className="grid gap-4">
+                  {/* Saved Addresses Selection */}
+                  {savedAddresses.length > 0 && (
+                    <div className="mb-6 space-y-3">
+                      <Label className="text-sm font-medium">Kayıtlı Adreslerim</Label>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {savedAddresses.map((address) => (
+                          <div
+                            key={address.id}
+                            onClick={() => handleSelectAddress(address)}
+                            className={`p-4 border rounded-xl cursor-pointer transition-all ${
+                              selectedAddressId === address.id && useSavedAddress
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-medium text-sm">{address.title}</span>
+                                  {address.is_default && (
+                                    <Badge variant="outline" className="text-xs">
+                                      Varsayılan
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-sm text-foreground">
+                                  {address.first_name} {address.last_name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">{address.phone}</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {address.address_line1}
+                                  {address.address_line2 && `, ${address.address_line2}`}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {address.district && `${address.district}, `}
+                                  {address.city} {address.postal_code}
+                                </p>
+                              </div>
+                              <div className="ml-4">
+                                <input
+                                  type="radio"
+                                  checked={selectedAddressId === address.id && useSavedAddress}
+                                  onChange={() => handleSelectAddress(address)}
+                                  className="w-4 h-4 text-primary"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleUseNewAddress}
+                        className="w-full"
+                      >
+                        Yeni Adres Ekle
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Address Form */}
+                  <div className={`grid gap-4 ${useSavedAddress && savedAddresses.length > 0 ? 'opacity-50 pointer-events-none' : ''}`}>
                     {/* Name Fields */}
                     <div className="grid sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -562,17 +969,24 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     <div className="space-y-2">
                       <Label htmlFor="phone">Telefon Numarası *</Label>
                       <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
                         <Input
                           id="phone"
                           name="phone"
                           type="tel"
-                          placeholder="05XX XXX XX XX"
+                          placeholder="05XXXXXXXXX"
                           value={formData.phone}
                           onChange={handleInputChange}
-                          className={`pl-10 ${errors.phone ? 'border-destructive' : ''}`}
+                          className={`pl-10 ${errors.phone ? 'border-destructive' : ''} ${!formData.phone ? 'text-transparent' : ''}`}
+                          maxLength={11}
                         />
+                        {!formData.phone && (
+                          <span className="absolute left-10 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none text-sm select-none">
+                            05XXXXXXXXX
+                          </span>
+                        )}
                       </div>
+                      <p className="text-xs text-muted-foreground">0 ile başlayan 11 haneli telefon numarası giriniz</p>
                       {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
                     </div>
 
@@ -670,6 +1084,7 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     className="w-full mt-6" 
                     size="lg"
                     onClick={handleContinueToPayment}
+                    disabled={useSavedAddress && !selectedAddressId}
                   >
                     Ödemeye Geç
                     <ChevronRight className="w-4 h-4" />
@@ -712,74 +1127,159 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                       Ödeme Yöntemi
                     </h2>
 
-                    {/* Stripe Payment Info */}
-                    <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-6">
+                    {/* PayTR Payment Info */}
+                    <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-4">
                       <div className="flex items-start gap-3">
                         <Shield className="w-5 h-5 text-primary mt-0.5" />
                         <div>
                           <p className="font-medium text-sm">Güvenli Ödeme</p>
                           <p className="text-xs text-muted-foreground mt-1">
-                            Kredi kartı bilgileriniz Stripe tarafından 256-bit SSL şifreleme ile korunmaktadır. 
-                            Kart bilgileriniz sunucularımızda saklanmaz.
+                            Kredi kartı bilgileriniz PayTR tarafından 256-bit SSL şifreleme ile korunmaktadır. 
+                            Kart bilgileriniz sunucularımızda saklanmaz. Ödeme işlemi PayTR güvenli altyapısı üzerinden gerçekleşir.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Fatura Bilgisi */}
+                    <div className="bg-accent/10 border border-accent/30 rounded-xl p-4 mb-6">
+                      <div className="flex items-start gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-accent mt-0.5" />
+                        <div>
+                          <p className="font-medium text-sm text-accent">Otomatik Fatura</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Ödeme tamamlandığında faturanız otomatik olarak e-posta adresinize gönderilecektir. 
+                            Fatura, sipariş detaylarınızı ve satıcı bilgilerini içermektedir.
                           </p>
                         </div>
                       </div>
                     </div>
 
                     {/* Payment Methods */}
-                    <div className="space-y-4">
-                      <div className="border border-primary rounded-xl p-4 bg-primary/5">
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input 
-                            type="radio" 
-                            name="paymentMethod" 
-                            value="card" 
-                            defaultChecked
-                            className="w-4 h-4 text-primary"
-                          />
-                          <CreditCard className="w-5 h-5" />
-                          <span className="font-medium">Kredi / Banka Kartı</span>
-                        </label>
-                        
-                        {/* Stripe Elements Placeholder */}
-                        <div className="mt-4 p-4 bg-background rounded-lg border border-border">
-                          <p className="text-sm text-muted-foreground text-center">
-                            Stripe ödeme formu burada görünecek
-                          </p>
-                          <p className="text-xs text-muted-foreground text-center mt-2">
-                            (Stripe integration yapıldığında aktif olacak)
-                          </p>
+                    {!showPayTRIframe ? (
+                      <div className="space-y-4">
+                        <div className="border border-primary rounded-xl p-4 bg-primary/5">
+                          <label className="flex items-center gap-3 cursor-pointer">
+                            <input 
+                              type="radio" 
+                              name="paymentMethod" 
+                              value="paytr" 
+                              defaultChecked
+                              className="w-4 h-4 text-primary"
+                            />
+                            <CreditCard className="w-5 h-5" />
+                            <span className="font-medium">Kredi / Banka Kartı (PayTR)</span>
+                          </label>
+                          
+                          <div className="mt-4 p-4 bg-background rounded-lg border border-border">
+                            <p className="text-sm text-muted-foreground text-center">
+                              Güvenli ödeme için PayTR kullanıyoruz
+                            </p>
+                            <p className="text-xs text-muted-foreground text-center mt-2">
+                              "Öde" butonuna tıklayarak PayTR ödeme sayfasına yönlendirileceksiniz
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="bg-background rounded-lg border border-border p-4">
+                          <h3 className="font-semibold mb-2">Ödeme İşlemi</h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Lütfen aşağıdaki formu doldurarak ödemenizi tamamlayın.
+                          </p>
+                          <div id="paytr-iframe-container" className="w-full min-h-[600px] flex items-center justify-center bg-background">
+                            <div className="text-center">
+                              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+                              <p className="text-muted-foreground">Ödeme sayfası yükleniyor...</p>
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            // Polling'i durdur
+                            if (pollingIntervalRef.current) {
+                              clearInterval(pollingIntervalRef.current);
+                              pollingIntervalRef.current = null;
+                            }
+                            
+                            setShowPayTRIframe(false);
+                            setPaymentId(null);
+                            setOrderId(null);
+                            
+                            // Kullanıcı ödeme ekranını kapattıysa siparişi iptal et
+                            const orderToCancel = orderId || pendingOrderIdRef.current;
+                            if (orderToCancel) {
+                              supabase
+                                .from("orders")
+                                .update({ status: "cancelled", updated_at: new Date().toISOString() })
+                                .eq("id", orderToCancel)
+                                .eq("status", "pending") // Sadece pending ise iptal et
+                                .then(({ error }) => {
+                                  if (error) console.warn("Order cancel update failed:", error);
+                                  else toast.info("Sipariş iptal edildi");
+                                });
+                              pendingOrderIdRef.current = null;
+                            }
+                          }}
+                          className="w-full"
+                        >
+                          Ödeme Sayfasını Kapat
+                        </Button>
+                      </div>
+                    )}
 
-                    <Button 
-                      variant="hero" 
-                      className="w-full mt-6" 
-                      size="lg"
-                      onClick={handlePayment}
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          İşleniyor...
-                        </>
-                      ) : (
-                        <>
-                          <Shield className="w-4 h-4" />
-                          ₺{total} Öde
-                        </>
-                      )}
-                    </Button>
+                    {!showPayTRIframe && (
+                      <>
+                        {/* Terms Checkbox */}
+                        <div className="flex items-start gap-3 mt-6 p-4 bg-muted/30 rounded-lg border border-border">
+                          <input
+                            type="checkbox"
+                            id="terms-checkbox"
+                            checked={termsAccepted}
+                            onChange={(e) => setTermsAccepted(e.target.checked)}
+                            className="mt-1 w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <label htmlFor="terms-checkbox" className="text-sm text-muted-foreground cursor-pointer select-none">
+                            <Link to="/pre-information-form" target="_blank" className="text-primary hover:underline font-medium">
+                              Ön Bilgilendirme Koşulları
+                            </Link>
+                            'nı ve{" "}
+                            <Link to="/distance-sales-agreement" target="_blank" className="text-primary hover:underline font-medium">
+                              Mesafeli Satış Sözleşmesi
+                            </Link>
+                            'ni okudum, onaylıyorum.
+                          </label>
+                        </div>
 
-                    <p className="text-xs text-muted-foreground text-center mt-4">
-                      "Öde" butonuna tıklayarak{" "}
-                      <Link to="/terms" className="text-primary hover:underline">Kullanım Şartları</Link>
-                      {" "}ve{" "}
-                      <Link to="/privacy" className="text-primary hover:underline">Gizlilik Politikası</Link>
-                      'nı kabul etmiş olursunuz.
-                    </p>
+                        <Button 
+                          variant="hero" 
+                          className="w-full mt-4" 
+                          size="lg"
+                          onClick={handlePayment}
+                          disabled={loading || !termsAccepted}
+                        >
+                          {loading ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              İşleniyor...
+                            </>
+                          ) : (
+                            <>
+                              <Shield className="w-4 h-4" />
+                              ₺{total} Öde
+                            </>
+                          )}
+                        </Button>
+
+                        {!termsAccepted && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 text-center mt-2">
+                            Ödeme yapmak için sözleşmeleri onaylamanız gerekmektedir.
+                          </p>
+                        )}
+                      </>
+                    )}
                   </div>
                 </motion.div>
               )}
@@ -799,79 +1299,38 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                 <div className="space-y-4 mb-6 max-h-60 overflow-y-auto">
                   {cartItems.map((item) => (
                     <div key={item.id} className="flex gap-3">
-                      <div className="w-16 h-16 bg-muted/30 rounded-lg flex items-center justify-center shrink-0">
+                      <div className="w-16 h-16 bg-muted/30 rounded-lg flex items-center justify-center shrink-0 relative">
                         <img 
                           src={item.image} 
                           alt={item.name}
                           className="w-12 h-12 object-contain"
                         />
+                        {/* İndirim Badge */}
+                        {item.customization?.discountPercentage && (
+                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            %{item.customization.discountPercentage}
+                          </span>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{item.name}</p>
                         <p className="text-xs text-muted-foreground">Adet: {item.quantity}</p>
-                        <p className="text-sm font-semibold text-gradient">₺{item.price * item.quantity}</p>
+                        {/* İndirimli fiyat gösterimi */}
+                        {item.customization?.originalPrice && item.customization?.discountPercentage ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-muted-foreground line-through">
+                              ₺{item.customization.originalPrice * item.quantity}
+                            </span>
+                            <span className="text-sm font-semibold text-red-500">
+                              ₺{item.price * item.quantity}
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-sm font-semibold text-gradient">₺{item.price * item.quantity}</p>
+                        )}
                       </div>
                     </div>
                   ))}
-                </div>
-
-                {/* Discount Code */}
-                <div className="border-t border-border pt-4 mb-4">
-                  <Label className="text-sm font-medium mb-2 block">İndirim Kodu</Label>
-                  {appliedDiscount ? (
-                    <div className="flex items-center justify-between bg-accent/10 border border-accent/30 rounded-lg p-3">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-accent" />
-                        <span className="text-sm font-medium">{appliedDiscount.code}</span>
-                        <span className="text-xs text-accent">
-                          (-₺{appliedDiscount.discountAmount.toFixed(2)})
-                        </span>
-                      </div>
-                      <button
-                        onClick={handleRemoveDiscount}
-                        className="text-muted-foreground hover:text-destructive transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                          <Input
-                            value={discountCode}
-                            onChange={(e) => {
-                              setDiscountCode(e.target.value.toUpperCase());
-                              setDiscountError("");
-                            }}
-                            placeholder="Kod girin"
-                            className="pl-10 uppercase"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleApplyDiscount();
-                              }
-                            }}
-                          />
-                        </div>
-                        <Button
-                          variant="outline"
-                          onClick={handleApplyDiscount}
-                          disabled={discountLoading}
-                        >
-                          {discountLoading ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            "Uygula"
-                          )}
-                        </Button>
-                      </div>
-                      {discountError && (
-                        <p className="text-xs text-destructive">{discountError}</p>
-                      )}
-                    </div>
-                  )}
                 </div>
 
                 <div className="border-t border-border pt-4 space-y-3">
@@ -879,29 +1338,20 @@ ${formData.notes ? 'Not: ' + formData.notes : ''}`.trim();
                     <span className="text-muted-foreground">Ara Toplam</span>
                     <span>₺{subtotal}</span>
                   </div>
-                  {appliedDiscount && (
-                    <div className="flex justify-between text-sm text-accent">
-                      <span>İndirim ({appliedDiscount.code})</span>
-                      <span>-₺{appliedDiscount.discountAmount.toFixed(2)}</span>
-                    </div>
-                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Kargo</span>
-                    <span className="text-accent">Ücretsiz</span>
+                    {isFreeShipping ? (
+                      <span className="text-accent">Ücretsiz</span>
+                    ) : (
+                      <span>₺{shippingCost}</span>
+                    )}
                   </div>
                 </div>
 
                 <div className="border-t border-border mt-4 pt-4">
                   <div className="flex justify-between items-center">
                     <span className="font-semibold">Toplam</span>
-                    <div className="text-right">
-                      {appliedDiscount && (
-                        <span className="text-sm text-muted-foreground line-through mr-2">
-                          ₺{subtotal}
-                        </span>
-                      )}
-                      <span className="text-2xl font-bold text-gradient">₺{total}</span>
-                    </div>
+                    <span className="text-2xl font-bold text-gradient">₺{total}</span>
                   </div>
                 </div>
 

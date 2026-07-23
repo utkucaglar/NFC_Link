@@ -24,6 +24,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
+import { sendOrderStatusSms } from "@/lib/sms";
+import { sendOrderStatusEmail } from "@/lib/email";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getProductImage, ORDER_STATUS_CONFIG, ORDER_STATUS_FLOW, type OrderStatus } from "@/lib/helpers";
@@ -92,7 +94,9 @@ export default function AdminOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get("status") || "all");
+  // Varsayılan: sadece ödeme sonrası aktif siparişler (pending/cancelled gizli)
+  // URL'de status varsa onu uygula (örn: /admin/orders?status=pending)
+  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get("status") || "active");
   const [expandedOrder, setExpandedOrder] = useState<string | null>(searchParams.get("id") || null);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -254,6 +258,48 @@ export default function AdminOrders() {
 
       if (error) throw error;
 
+      // Siparişi bul ve SMS gönder
+      const order = orders.find(o => o.id === orderId);
+      if (order) {
+        // Kullanıcının telefonunu al
+        const { data: profile } = await supabase
+          .from("user_profiles")
+          .select("phone")
+          .eq("id", order.user_id)
+          .single();
+        
+        if (profile?.phone) {
+          sendOrderStatusSms(profile.phone, order.order_number, newStatus, trackingNumber)
+            .then(result => {
+              if (result.success) {
+                console.log("SMS gönderildi:", order.order_number);
+              }
+            })
+            .catch(console.error);
+        }
+
+        // Email bildirimi gönder
+        const { data: userProfile } = await supabase
+          .from("user_profiles")
+          .select("email")
+          .eq("id", order.user_id)
+          .single();
+        
+        if (userProfile?.email) {
+          sendOrderStatusEmail(userProfile.email, order.order_number, newStatus, undefined, undefined, trackingNumber)
+            .then((result) => {
+              if (!result.success) {
+                // Email gönderilemedi ama sipariş durumu güncellendi, sessizce logla
+                console.warn("Email gönderilemedi:", result.error);
+              }
+            })
+            .catch((error) => {
+              // Email hatası sipariş güncellemesini engellemez
+              console.warn("Email gönderme hatası:", error);
+            });
+        }
+      }
+
       setOrders(orders.map(o => 
         o.id === orderId 
           ? { ...o, status: newStatus, tracking_number: trackingNumber || o.tracking_number }
@@ -301,13 +347,51 @@ export default function AdminOrders() {
     }
   };
 
+  const setStatusFilterWithUrl = (status: string) => {
+    setStatusFilter(status);
+    const next = new URLSearchParams(searchParams);
+    if (status && status !== "active") next.set("status", status);
+    else next.delete("status");
+    // id parametresini koru
+    if (expandedOrder) next.set("id", expandedOrder);
+    setSearchParams(next);
+  };
+
+  const handleHardDeleteOrder = async (orderId: string, orderNumber: string) => {
+    const ok = window.confirm(
+      `Bu sipariş KALICI olarak silinecek ve geri alınamaz:\n\n${orderNumber}\n\nDevam edilsin mi?`
+    );
+    if (!ok) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-delete-order", {
+        body: { order_id: orderId },
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Silme işlemi başarısız");
+
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      if (expandedOrder === orderId) setExpandedOrder(null);
+
+      toast.success("Sipariş kalıcı olarak silindi");
+    } catch (err: any) {
+      console.error("Hard delete order error:", err);
+      toast.error(err?.message || "Sipariş silinemedi");
+    }
+  };
+
   const filteredOrders = orders.filter(order => {
     const matchesSearch = 
       order.order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
       order.user_profiles?.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       `${order.user_profiles?.first_name} ${order.user_profiles?.last_name}`.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesStatus = statusFilter === "all" || order.status === statusFilter;
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "active"
+        ? order.status !== "pending" && order.status !== "cancelled"
+        : order.status === statusFilter);
     
     return matchesSearch && matchesStatus;
   });
@@ -356,9 +440,16 @@ export default function AdminOrders() {
           </div>
           <div className="flex gap-2 flex-wrap">
             <Button
+              variant={statusFilter === "active" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStatusFilterWithUrl("active")}
+            >
+              Aktif
+            </Button>
+            <Button
               variant={statusFilter === "all" ? "default" : "outline"}
               size="sm"
-              onClick={() => setStatusFilter("all")}
+              onClick={() => setStatusFilterWithUrl("all")}
             >
               Tümü
             </Button>
@@ -367,7 +458,7 @@ export default function AdminOrders() {
                 key={key}
                 variant={statusFilter === key ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter(key)}
+                onClick={() => setStatusFilterWithUrl(key)}
               >
                 {config.label}
               </Button>
@@ -454,6 +545,26 @@ export default function AdminOrders() {
                         className="border-t border-border"
                       >
                         <div className="p-4 md:p-6 space-y-6">
+                          {/* Danger Zone */}
+                          <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border border-destructive/30 bg-destructive/5">
+                            <div>
+                              <p className="font-medium text-destructive">Kalıcı Silme</p>
+                              <p className="text-sm text-muted-foreground">
+                                Bu işlem siparişi veritabanından tamamen kaldırır (geri alınamaz).
+                              </p>
+                            </div>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleHardDeleteOrder(order.id, order.order_number);
+                              }}
+                            >
+                              Siparişi Kalıcı Sil
+                            </Button>
+                          </div>
+
                           {/* Customer Info */}
                           <div className="grid md:grid-cols-2 gap-6">
                             <div>
@@ -501,27 +612,113 @@ export default function AdminOrders() {
                                       </div>
 
                                       {/* Customization Details */}
-                                      {item.customization && Object.keys(item.customization).length > 0 && (
-                                        <div className="mt-3 p-3 bg-background rounded-lg border border-border">
-                                          <div className="flex items-center justify-between mb-2">
-                                            <p className="text-sm font-medium text-primary">Müşteri Kişiselleştirmesi</p>
-                                            {item.customization_confirmed && (
-                                              <Badge className="bg-accent/10 text-accent border-accent/20 text-xs">
-                                                <Check className="w-3 h-3 mr-1" />
-                                                Onaylandı
-                                              </Badge>
-                                            )}
+                                      {item.customization && Object.keys(item.customization).length > 0 && (() => {
+                                        // Türkçe etiket mapping
+                                        const labelMap: Record<string, string> = {
+                                          name: 'Ad Soyad',
+                                          title: 'Ünvan/Pozisyon',
+                                          company: 'Şirket',
+                                          phone: 'Telefon',
+                                          email: 'E-posta',
+                                          bio: 'Hakkında',
+                                          linkedin: 'LinkedIn',
+                                          instagram: 'Instagram',
+                                          whatsapp: 'WhatsApp',
+                                          website: 'Web Sitesi',
+                                          theme: 'Tema',
+                                          renk: 'Seçilen Renk',
+                                          color: 'Seçilen Renk',
+                                          petName: 'Hayvan Adı',
+                                          ownerName: 'Sahip Adı',
+                                          ownerPhone: 'Sahip Telefonu',
+                                          partnerName1: 'Partner 1 Adı',
+                                          partnerName2: 'Partner 2 Adı',
+                                          relationshipStartDate: 'Birliktelik Tarihi',
+                                          subtitle: 'Alt Başlık',
+                                          subscriptionFee: 'Aylık Abonelik Ücreti',
+                                          freeSubscriptionMonths: 'Ücretsiz Abonelik Süresi',
+                                          originalPrice: 'Liste Fiyatı',
+                                          discountPercentage: 'İndirim Oranı',
+                                        };
+
+                                        // Gizlenecek alanlar
+                                        const hiddenFields = ['nfcType', 'type', 'SubscriptionFee', 'backgroundImage', 'petImage'];
+
+                                        // Tema mapping
+                                        const themeMap: Record<string, string> = {
+                                          dark: 'Koyu Tema',
+                                          light: 'Açık Tema',
+                                          minimal: 'Minimal',
+                                          gradient: 'Gradyan',
+                                          romantic: 'Romantik',
+                                          elegant: 'Zarif',
+                                          modern: 'Modern',
+                                        };
+
+                                        const formatValue = (key: string, value: unknown): string => {
+                                          if (value === null || value === undefined || value === '') return '-';
+                                          if (key === 'theme' && typeof value === 'string') return themeMap[value] || value;
+                                          if (key === 'subscriptionFee' && typeof value === 'number') return `₺${value}`;
+                                          if (key === 'freeSubscriptionMonths') return `${value} ay`;
+                                          if (key === 'discountPercentage') return `%${value}`;
+                                          if (key === 'relationshipStartDate' && typeof value === 'string') {
+                                            const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                                            if (m) {
+                                              const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+                                              return date.toLocaleDateString('tr-TR', { year: 'numeric', month: 'long', day: 'numeric' });
+                                            }
+                                          }
+                                          return String(value);
+                                        };
+
+                                        // Öncelik sıralaması
+                                        const priorityOrder = ['name', 'title', 'company', 'phone', 'email', 'whatsapp', 'linkedin', 'instagram', 'website', 'bio', 'renk', 'color', 'theme', 'partnerName1', 'partnerName2', 'relationshipStartDate', 'subtitle', 'petName', 'ownerName', 'ownerPhone', 'subscriptionFee', 'freeSubscriptionMonths', 'originalPrice', 'discountPercentage'];
+
+                                        const entries = Object.entries(item.customization)
+                                          .filter(([key, value]) => !hiddenFields.includes(key) && value !== null && value !== undefined && value !== '')
+                                          .sort((a, b) => {
+                                            const indexA = priorityOrder.indexOf(a[0]);
+                                            const indexB = priorityOrder.indexOf(b[0]);
+                                            if (indexA === -1 && indexB === -1) return 0;
+                                            if (indexA === -1) return 1;
+                                            if (indexB === -1) return -1;
+                                            return indexA - indexB;
+                                          });
+
+                                        return (
+                                          <div className="mt-3 p-3 bg-background rounded-lg border border-border">
+                                            <div className="flex items-center justify-between mb-3">
+                                              <p className="text-sm font-medium text-primary">Müşteri Kişiselleştirmesi</p>
+                                              {item.customization_confirmed && (
+                                                <Badge className="bg-accent/10 text-accent border-accent/20 text-xs">
+                                                  <Check className="w-3 h-3 mr-1" />
+                                                  Onaylandı
+                                                </Badge>
+                                              )}
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                                              {entries.map(([key, value]) => {
+                                                const label = labelMap[key] || key;
+                                                const formattedValue = formatValue(key, value);
+                                                const isUrl = typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'));
+                                                
+                                                return (
+                                                  <div key={key} className="flex items-start gap-2 p-2 bg-muted/30 rounded-md">
+                                                    <span className="text-muted-foreground font-medium min-w-[100px] shrink-0">{label}:</span>
+                                                    {isUrl ? (
+                                                      <a href={String(value)} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate">
+                                                        {String(value).replace(/^https?:\/\/(www\.)?/, '')}
+                                                      </a>
+                                                    ) : (
+                                                      <span className="text-foreground truncate">{formattedValue}</span>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
                                           </div>
-                                          <div className="space-y-1 text-sm">
-                                            {Object.entries(item.customization).map(([key, value]) => (
-                                              <p key={key}>
-                                                <span className="text-muted-foreground capitalize">{key}:</span>{" "}
-                                                {typeof value === 'string' ? value : JSON.stringify(value)}
-                                              </p>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
+                                        );
+                                      })()}
 
                                       {/* Admin Notes */}
                                       <div className="mt-3">

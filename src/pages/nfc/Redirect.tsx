@@ -24,13 +24,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { parseDateString } from "@/lib/helpers";
 
 // Types
 interface CoupleData {
   partnerName1: string;
   partnerName2: string;
   relationshipStartDate: string;
-  backgroundImage?: string;
   subtitle?: string;
   theme: string;
 }
@@ -202,15 +202,11 @@ export default function NFCRedirect() {
           }
         }
 
-        // Update scan count
-        await supabase.from("nfcs").update({
-          scan_count: (nfcData.scan_count || 0) + 1,
-          last_scanned_at: new Date().toISOString(),
-        }).eq("id", nfcData.id);
-
+        // NFC scan kaydı oluştur (trigger otomatik olarak scan_count'u artıracak)
         await supabase.from("nfc_scans").insert({
           nfc_id: nfcData.id,
           user_agent: navigator.userAgent,
+          scanned_at: new Date().toISOString(),
         });
 
         setNfcId(nfcData.id);
@@ -248,7 +244,8 @@ export default function NFCRedirect() {
   // Timer
   useEffect(() => {
     if (!data?.relationshipStartDate) return;
-    const startDate = new Date(data.relationshipStartDate);
+    const startDate = parseDateString(data.relationshipStartDate);
+    if (!startDate) return;
     
     const updateTime = () => {
       const now = new Date();
@@ -437,7 +434,8 @@ export default function NFCRedirect() {
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const date = parseDateString(dateString);
+    if (!date) return dateString;
     const months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
     return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
   };
@@ -467,14 +465,7 @@ export default function NFCRedirect() {
   return (
     <div className="min-h-screen relative text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Background */}
-      {data.backgroundImage ? (
-        <>
-          <div className="fixed inset-0 bg-cover bg-center bg-no-repeat scale-105" style={{ backgroundImage: `url(${data.backgroundImage})` }} />
-          <div className="fixed inset-0 bg-black/50" />
-        </>
-      ) : (
-        <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-purple-900/50 to-slate-900" />
-      )}
+      <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-purple-900/50 to-slate-900" />
       <div className="fixed inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40" />
 
       {/* Header */}
@@ -553,16 +544,31 @@ export default function NFCRedirect() {
 
           {/* Counter Card */}
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-            className="bg-white/[0.08] backdrop-blur-2xl rounded-[28px] border border-white/10 p-8 md:p-10 shadow-2xl w-full max-w-2xl">
-            <div className="grid grid-cols-4 gap-4 md:gap-6 mb-8">
+            className="bg-white/[0.08] backdrop-blur-2xl rounded-[28px] border border-white/10 p-6 sm:p-8 md:p-10 shadow-2xl w-auto max-w-[95vw]">
+            <div className="flex flex-wrap justify-center gap-3 sm:gap-4 md:gap-6 mb-8">
+              {/* Gün - Genişleyebilir */}
+              <div className="bg-black/25 rounded-2xl px-4 sm:px-6 md:px-8 py-4 sm:py-5 md:py-6 text-center border border-white/5 min-w-[80px] sm:min-w-[100px]">
+                <div 
+                  className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl mb-2 font-semibold leading-tight whitespace-nowrap" 
+                  style={{ fontFamily: "'Cinzel', serif" }}
+                >
+                  {timeElapsed.days}
+                </div>
+                <div className="text-white/50 text-[10px] md:text-xs tracking-[0.2em] uppercase">GÜN</div>
+              </div>
+              {/* Saat, Dakika, Saniye - Sabit boyut */}
               {[
-                { value: timeElapsed.days, label: "GÜN" },
                 { value: String(timeElapsed.hours).padStart(2, "0"), label: "SAAT" },
                 { value: String(timeElapsed.minutes).padStart(2, "0"), label: "DAKİKA" },
                 { value: String(timeElapsed.seconds).padStart(2, "0"), label: "SANİYE" },
               ].map((item, i) => (
-                <div key={i} className="bg-black/25 rounded-2xl p-5 md:p-6 text-center border border-white/5">
-                  <div className="text-4xl md:text-5xl lg:text-6xl mb-2" style={{ fontFamily: "'Cinzel', serif" }}>{item.value}</div>
+                <div key={i} className="bg-black/25 rounded-2xl px-4 sm:px-6 md:px-8 py-4 sm:py-5 md:py-6 text-center border border-white/5 min-w-[70px] sm:min-w-[90px]">
+                  <div 
+                    className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl mb-2 font-semibold leading-tight" 
+                    style={{ fontFamily: "'Cinzel', serif" }}
+                  >
+                    {item.value}
+                  </div>
                   <div className="text-white/50 text-[10px] md:text-xs tracking-[0.2em] uppercase">{item.label}</div>
                 </div>
               ))}

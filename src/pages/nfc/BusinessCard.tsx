@@ -105,21 +105,13 @@ export default function NFCBusinessCard() {
           }
         }
 
-        // Tarama sayısını artır
-        await supabase
-          .from("nfcs")
-          .update({ 
-            scan_count: (nfcData.scan_count || 0) + 1,
-            last_scanned_at: new Date().toISOString()
-          })
-          .eq("id", nfcData.id);
-
-        // NFC scan kaydı oluştur
+        // NFC scan kaydı oluştur (trigger otomatik olarak scan_count'u artıracak)
         await supabase
           .from("nfc_scans")
           .insert({
             nfc_id: nfcData.id,
             user_agent: navigator.userAgent,
+            scanned_at: new Date().toISOString(),
           });
 
         setData(nfcData.data as BusinessCardData);
@@ -179,27 +171,49 @@ export default function NFCBusinessCard() {
 
   // VCF dosyası oluştur
   const generateVCard = () => {
-    const vcard = `BEGIN:VCARD
-VERSION:3.0
-FN:${data.name}
-TITLE:${data.title}
-ORG:${data.company}
-TEL:${data.phone}
-EMAIL:${data.email}
-${data.website ? `URL:${data.website}` : ""}
-${data.linkedin ? `X-SOCIALPROFILE;type=linkedin:https://linkedin.com/in/${data.linkedin}` : ""}
-NOTE:${data.bio || ""}
-END:VCARD`;
+    // vCard satırları (boş olanları filtrele)
+    const lines = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `FN:${data.name}`,
+      data.title ? `TITLE:${data.title}` : "",
+      data.company ? `ORG:${data.company}` : "",
+      data.phone ? `TEL;TYPE=CELL:${data.phone}` : "",
+      data.email ? `EMAIL:${data.email}` : "",
+      data.website ? `URL:${data.website}` : "",
+      data.linkedin ? `X-SOCIALPROFILE;type=linkedin:https://linkedin.com/in/${data.linkedin}` : "",
+      data.instagram ? `X-SOCIALPROFILE;type=instagram:https://instagram.com/${data.instagram}` : "",
+      data.bio ? `NOTE:${data.bio.replace(/\n/g, "\\n")}` : "",
+      "END:VCARD"
+    ].filter(line => line !== "");
 
-    const blob = new Blob([vcard], { type: "text/vcard" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${data.name.replace(/\s+/g, "_")}.vcf`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // vCard standardı CRLF kullanır
+    const vcard = lines.join("\r\n");
+
+    // iOS/Safari kontrolü
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isIOS || isSafari) {
+      // iOS ve Safari için data URI kullan
+      // Base64 encode et
+      const base64 = btoa(unescape(encodeURIComponent(vcard)));
+      const dataUri = `data:text/vcard;base64,${base64}`;
+      
+      // Yeni pencerede aç - Safari vCard'ı tanıyacak ve Kişiler'e ekleme seçeneği sunacak
+      window.open(dataUri, "_blank");
+    } else {
+      // Diğer tarayıcılar için normal indirme
+      const blob = new Blob(["\ufeff" + vcard], { type: "text/vcard;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${data.name.replace(/\s+/g, "_")}.vcf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
   };
 
   return (

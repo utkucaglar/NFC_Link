@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ShoppingCart, Menu, X, Wifi, User, LogOut, Settings } from "lucide-react";
+import { ShoppingCart, Menu, X, User, LogOut, Settings } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -54,8 +54,12 @@ export function Navbar() {
         <div className="flex items-center justify-between h-16 md:h-20">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2">
-            <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center shadow-glow">
-              <Wifi className="w-5 h-5 text-primary-foreground" />
+            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center shadow-glow overflow-hidden">
+              <img 
+                src="/esdodesign_logo.png" 
+                alt="Esdodesign Logo" 
+                className="w-full h-full object-contain"
+              />
             </div>
             <span className="text-xl font-bold text-gradient">Esdodesign</span>
           </Link>
